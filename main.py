@@ -1,9 +1,10 @@
 from mssql_agent.sqldb import MSSQLConnector
 from fastapi import FastAPI, HTTPException,Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from mssql_agent.sqldb import MSSQLConnector
 from langchain_openai import ChatOpenAI
-from langchain_openai import ChatOpenAI
+import json
+import asyncio
 
 
 app = FastAPI(title="SQL LLM API")
@@ -25,18 +26,30 @@ conn = MSSQLConnector(
 )
 
 
+    
+@app.post("/query_stream")
+async def run_query_stream(req: Request):
+    data = await req.json()
+    question = data.get("question")
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing 'question'")
 
-@app.post("/query")
-async def run_query(req: Request):
-    try:
-        data = await req.json()  # Parse JSON body
-        question = data.get("question")
-        if not question:
-            raise HTTPException(status_code=400, detail="Missing 'question' in request body")
-        
-        result = conn.invoke(question, llm)
-        # conn.invoke may return a dict or string
-        output = result["answer"] if isinstance(result, dict) else str(result)
-        return JSONResponse(content={"result": output})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    async def event_generator():
+        queue = asyncio.Queue()
+
+        # callback to receive tokens from MSSQLConnector
+        def token_callback(token: str):
+            asyncio.create_task(queue.put(token))
+
+        # Start streaming
+        asyncio.create_task(conn.invoke_streaming(question, llm, token_callback))
+
+        while True:
+            token = await queue.get()
+            if token is None:  # end of stream
+                break
+            # yield json.dumps({"chunk": token}) + "\n"
+            text_piece = token.content if hasattr(token, "content") else str(token)
+            yield json.dumps({"chunk": text_piece}) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/json")

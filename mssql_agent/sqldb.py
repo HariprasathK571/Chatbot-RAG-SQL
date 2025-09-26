@@ -2,11 +2,11 @@ from langchain_community.utilities.sql_database import SQLDatabase
 from typing_extensions import TypedDict,Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import ChatPromptTemplate
-from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
+from colorama import Fore, Style, init
+init(autoreset=True)  # ensures colors reset after each print
+import asyncio
 import re
-console = Console()
+
 
 class QueryOutput(TypedDict):
     """Generated SQL query."""
@@ -100,17 +100,15 @@ class MSSQLConnector:
         # print(prompt)
         structured_llm = llm.with_structured_output(QueryOutput)
         result = structured_llm.invoke(prompt)
-
-        #below 3 line is just for log purpose!
-        sql_text = result["query"] if isinstance(result, dict) else str(result)
-        syntax = Syntax(sql_text, "sql", theme="monokai", line_numbers=True)
-        console.print(syntax, style="green")
         return result
     
     def execute_query(self,query):
         """Execute SQL query."""
         execute_query_tool = QuerySQLDatabaseTool(db= self.db)
         sqlresult =  execute_query_tool.invoke(query)
+
+        if isinstance(sqlresult, str) and sqlresult.lower().startswith("error:"):
+            raise Exception(sqlresult)
         return sqlresult
     
     def generate_answer(self,question,querygenbyllm,query_values,llm):
@@ -123,20 +121,86 @@ class MSSQLConnector:
             f"SQL Result: {query_values}"
         )
         response = llm.invoke(prompt)
+        
         return {"answer": response.content}
-    
-    def execute_with_retry(self, question, llm, max_retries: int = 2):
+
+    # async def invoke_streaming(self, question, llm, token_callback):
+    #     attempt = 0
+    #     querygenbyllm = None  # initialize
+    #     max_retries = 2
+
+
+    #     while attempt <= max_retries:
+    #         try:
+    #             if attempt == 0:
+    #                 querygenbyllm = self.write_query(question, llm)
+    #                 querygenbyllm = {"query":"usuffsdf"}
+    #             else:
+    #                 feedback_prompt = (
+    #                     f"The previously generated SQL query failed:\n{querygenbyllm}\n"
+    #                     f"Error message: {last_error}\n"
+    #                     f"Tables/columns allowed: {self.db.get_table_info()}\n"
+    #                     f"Please generate a corrected SQL query for the same user question:\n{question}"
+    #                 )
+    #                 structured_llm = llm.with_structured_output(QueryOutput)
+    #                 querygenbyllm = structured_llm.invoke(feedback_prompt)
+
+    #             sql_text = querygenbyllm["query"] if isinstance(querygenbyllm, dict) else str(querygenbyllm)
+    #             print(Fore.GREEN + f'Generated SQL:\n"{sql_text}"' + Style.RESET_ALL)
+    #             query_values = self.execute_query(querygenbyllm)
+    #             print(Fore.RED + f'Generated values:\n"{query_values}"' + Style.RESET_ALL)
+
+
+    #             answer_prompt = (
+    #         "Given the following user question, corresponding SQL query, "
+    #         "and SQL result, answer the user question.\n\n"
+    #         f"Question: {question}\n"
+    #         f"SQL Query: {querygenbyllm}\n"
+    #         f"SQL Result: {query_values}"
+    #     )
+    #             for token in llm.stream(answer_prompt):
+    #                 token_callback(token)
+    #                 await asyncio.sleep(0)
+
+    #             token_callback(None)  # end of stream
+    #             return
+
+
+    #         except Exception as e:
+    #             last_error = str(e)  # save error for feedback
+    #             print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
+
+    #             if attempt == max_retries:
+    #             # Instead of exposing DB error, generate a general answer
+    #                 fallback_prompt = (
+    #                     f"The user asked: {question}\n"
+    #                     f"However, the system could not retrieve an answer from the database "
+    #                     f"after {max_retries} attempts.\n"
+    #                     "Please provide a polite, general response that acknowledges the failure "
+    #                     "without exposing technical details, and suggest the user try rephrasing."
+    #                 )
+    #                 for token in llm.stream(fallback_prompt):
+    #                     token_callback(token)
+    #                     await asyncio.sleep(0)
+    #                 token_callback(None)
+    #                 return
+    #             attempt += 1
+
+
+    async def invoke_streaming(self, question, llm, token_callback):
+
         attempt = 0
         querygenbyllm = None  # initialize
+        max_retries = 1
 
         while attempt <= max_retries:
             try:
+                # Generate query (first attempt or feedback)
                 if attempt == 0:
-                    # first attempt: normal query generation
                     querygenbyllm = self.write_query(question, llm)
-                    # querygenbyllm = "seeldfsd"
+                    # querygenbyllm = {"query":"usuffsdf"}
                 else:
-                    # regenerate using feedback from last error
+                    # regenerate query based on last error
                     feedback_prompt = (
                         f"The previously generated SQL query failed:\n{querygenbyllm}\n"
                         f"Error message: {last_error}\n"
@@ -145,33 +209,56 @@ class MSSQLConnector:
                     )
                     structured_llm = llm.with_structured_output(QueryOutput)
                     querygenbyllm = structured_llm.invoke(feedback_prompt)
-                    # querygenbyllm = "seeldfsd"
+                    # querygenbyllm = {"query":"usuffsdf"}
 
-                # execute query
-                query_values = self.execute_query(querygenbyllm)
-                return self.generate_answer(question, querygenbyllm, query_values, llm)
+
+                sql_text = querygenbyllm["query"] if isinstance(querygenbyllm, dict) else str(querygenbyllm)
+                print(Fore.GREEN + f'Generated SQL:\n"{sql_text}"' + Style.RESET_ALL)
+
+                # Execute SQL
+                try:
+                    query_values = self.execute_query(sql_text)
+                    print(Fore.RED + f'Query Result:\n"{query_values}"' + Style.RESET_ALL)
+                except Exception as sql_error:
+                    last_error = str(sql_error)
+                    print(Fore.RED + f'SQL Execution failed:\n"{last_error}"' + Style.RESET_ALL)
+                    attempt += 1
+                    if attempt > max_retries:
+                        # ✅ fallback if retries exhausted
+                        fallback_prompt = (
+                            f"The user asked: {question}\n"
+                            f"However, the system could not retrieve an answer from the database "
+                            f"after {max_retries} attempts.\n"
+                            "Please provide a polite, general response that acknowledges the failure "
+                            "without exposing technical details, and suggest the user try rephrasing."
+                        )
+                        for token in llm.stream(fallback_prompt):
+                            token_callback(token)
+                            await asyncio.sleep(0)
+                        token_callback(None)
+                        return
+                    continue  # retry loop
+
+                # Only if SQL succeeded, generate streaming answer
+                answer_prompt = (
+                    "Given the following user question, corresponding SQL query, "
+                    "and SQL result, answer the user question.\n\n"
+                    f"Question: {question}\n"
+                    f"SQL Query: {sql_text}\n"
+                    f"SQL Result: {query_values}"
+                )
+                for token in llm.stream(answer_prompt):
+                    token_callback(token)
+                    await asyncio.sleep(0)
+
+                token_callback(None)  # end of stream
+                return
 
             except Exception as e:
-                last_error = str(e)  # save error for feedback
-                print(f"Attempt {attempt+1} failed with error: {last_error}")
-
-                if attempt == max_retries:
-                # Instead of exposing DB error, generate a general answer
-                    fallback_prompt = (
-                        f"The user asked: {question}\n"
-                        f"However, the system could not retrieve an answer from the database "
-                        f"after {max_retries} attempts.\n"
-                        "Please provide a polite, general response that acknowledges the failure "
-                        "without exposing technical details, and suggest the user try rephrasing."
-                    )
-                    safe_response = llm.invoke(fallback_prompt)
-                    return {"answer": safe_response.content}
+                # Catch unexpected errors in query generation
+                last_error = str(e)
+                print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
                 attempt += 1
+                 
 
-
-
-
-    def invoke(self,question,llm):
-        final_summarization = self.execute_with_retry(question, llm)
-        return final_summarization
 
