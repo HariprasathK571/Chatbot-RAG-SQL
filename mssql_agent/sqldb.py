@@ -2,6 +2,11 @@ from langchain_community.utilities.sql_database import SQLDatabase
 from typing_extensions import TypedDict,Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import ChatPromptTemplate
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+import re
+console = Console()
 
 class QueryOutput(TypedDict):
     """Generated SQL query."""
@@ -75,9 +80,15 @@ class MSSQLConnector:
 
         return query_prompt_template
     
+    # def clean_schema(self,raw_schema):
+    # # Remove block comments (/* ... */)
+    #     return re.sub(r"/\*.*?\*/", "", raw_schema, flags=re.DOTALL).strip()
+    
+
     def write_query(self,question,llm):
         """Generate SQL query to fetch information."""
         query_prompt_template = self.promptemp()
+        # cleanschema=self.clean_schema(self.db.get_table_info())
         prompt = query_prompt_template.invoke(
             {
                 "dialect": self.db.dialect,
@@ -86,9 +97,14 @@ class MSSQLConnector:
                 "input": question
             }
         )
-        print(prompt)
+        # print(prompt)
         structured_llm = llm.with_structured_output(QueryOutput)
         result = structured_llm.invoke(prompt)
+
+        #below 3 line is just for log purpose!
+        sql_text = result["query"] if isinstance(result, dict) else str(result)
+        syntax = Syntax(sql_text, "sql", theme="monokai", line_numbers=True)
+        console.print(syntax, style="green")
         return result
     
     def execute_query(self,query):
@@ -109,13 +125,53 @@ class MSSQLConnector:
         response = llm.invoke(prompt)
         return {"answer": response.content}
     
-    def invoke(self,question,llm):
-        querygenbyllm = self.write_query(question,llm)
-        print(querygenbyllm)
-        query_values = self.execute_query(querygenbyllm)
-        print(query_values)
-        final_summarization = self.generate_answer(question,querygenbyllm,query_values,llm)
-        print(final_summarization)
+    def execute_with_retry(self, question, llm, max_retries: int = 2):
+        attempt = 0
+        querygenbyllm = None  # initialize
 
+        while attempt <= max_retries:
+            try:
+                if attempt == 0:
+                    # first attempt: normal query generation
+                    querygenbyllm = self.write_query(question, llm)
+                    # querygenbyllm = "seeldfsd"
+                else:
+                    # regenerate using feedback from last error
+                    feedback_prompt = (
+                        f"The previously generated SQL query failed:\n{querygenbyllm}\n"
+                        f"Error message: {last_error}\n"
+                        f"Tables/columns allowed: {self.db.get_table_info()}\n"
+                        f"Please generate a corrected SQL query for the same user question:\n{question}"
+                    )
+                    structured_llm = llm.with_structured_output(QueryOutput)
+                    querygenbyllm = structured_llm.invoke(feedback_prompt)
+                    # querygenbyllm = "seeldfsd"
+
+                # execute query
+                query_values = self.execute_query(querygenbyllm)
+                return self.generate_answer(question, querygenbyllm, query_values, llm)
+
+            except Exception as e:
+                last_error = str(e)  # save error for feedback
+                print(f"Attempt {attempt+1} failed with error: {last_error}")
+
+                if attempt == max_retries:
+                # Instead of exposing DB error, generate a general answer
+                    fallback_prompt = (
+                        f"The user asked: {question}\n"
+                        f"However, the system could not retrieve an answer from the database "
+                        f"after {max_retries} attempts.\n"
+                        "Please provide a polite, general response that acknowledges the failure "
+                        "without exposing technical details, and suggest the user try rephrasing."
+                    )
+                    safe_response = llm.invoke(fallback_prompt)
+                    return {"answer": safe_response.content}
+                attempt += 1
+
+
+
+
+    def invoke(self,question,llm):
+        final_summarization = self.execute_with_retry(question, llm)
         return final_summarization
 
