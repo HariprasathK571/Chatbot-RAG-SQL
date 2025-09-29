@@ -3,25 +3,38 @@ stored it under the vectorDB -> https://github.com/krishnaik06/Agentic-Langgraph
 
 openaikey->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
 
-from openai import OpenAI
 
-client = OpenAI(
-  base_url="https://openrouter.ai/api/v1",
-  api_key="<OPENROUTER_API_KEY>",
+suppose if we are facing the DB connection issues:
+explore the below concepts and solve that
+
+from sqlalchemy import create_engine, text
+from langchain_community.utilities import SQLDatabase
+
+# --- Create engine ---
+engine = create_engine(
+    "mssql+pyodbc://user:password@host:1433/mydb?driver=ODBC+Driver+17+for+SQL+Server",
+    pool_size=2,
+    max_overflow=0,
+    pool_recycle=1800,
 )
 
-completion = client.chat.completions.create(
-  extra_headers={
-    "HTTP-Referer": "<YOUR_SITE_URL>", # Optional. Site URL for rankings on openrouter.ai.
-    "X-Title": "<YOUR_SITE_NAME>", # Optional. Site title for rankings on openrouter.ai.
-  },
-  extra_body={},
-  model="meta-llama/llama-3.3-70b-instruct:free",
-  messages=[
-    {
-      "role": "user",
-      "content": "What is the meaning of life?"
-    }
-  ]
-)
-print(completion.choices[0].message.content)
+db = SQLDatabase(engine=engine)
+
+# --- Run first query (opens a connection) ---
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT 1 AS test"))
+    print("First query result:", result.fetchall())
+
+# --- Check pool state ---
+print("Pool checked out connections before dispose:", engine.pool.checkedout())
+
+# --- Dispose connections ---
+engine.dispose()
+print("✅ Engine disposed. All pooled connections closed.")
+
+# --- Run another query (this will re-create connections) ---
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT 2 AS test"))
+    print("Second query result:", result.fetchall())
+
+print("Pool checked out connections after re-connect:", engine.pool.checkedout())

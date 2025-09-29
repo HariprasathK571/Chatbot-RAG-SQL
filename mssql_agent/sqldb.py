@@ -16,26 +16,40 @@ class QueryOutput(TypedDict):
 class MSSQLConnector:
     """SQL Server (MSSQL) database connection manager."""
 
-    def __init__(self, username: str, password: str, host: str, port: int, 
-                 database: str, driver: str = "ODBC Driver 17 for SQL Server"):
+    # def __init__(self, username: str, password: str, host: str, port: int, 
+    #              database: str, driver: str = "ODBC Driver 17 for SQL Server"):
+    #     self.username = username
+    #     self.password = password
+    #     self.host = host
+    #     self.port = port
+    #     self.database = database
+    #     self.driver = driver
+
+    #     # Escape special chars in password for URI (e.g., @, #, etc.)
+    #     safe_password = password.replace("@", "%40")
+
+    #     # Build URI
+    #     self.uri = (
+    #         f"mssql+pyodbc://{username}:{safe_password}"
+    #         f"@{host}:{port}/{database}?driver={driver.replace(' ', '+')}"
+    #     )
+
+    #     # Initialize db connection
+    #     self.db = SQLDatabase.from_uri(self.uri)
+    def __init__(self, username: str, password: str, host: str, port: int, database: str):
         self.username = username
         self.password = password
         self.host = host
         self.port = port
         self.database = database
-        self.driver = driver
 
         # Escape special chars in password for URI (e.g., @, #, etc.)
         safe_password = password.replace("@", "%40")
 
-        # Build URI
-        self.uri = (
-            f"mssql+pyodbc://{username}:{safe_password}"
-            f"@{host}:{port}/{database}?driver={driver.replace(' ', '+')}"
-        )
-
-        # Initialize db connection
+        # Build PostgreSQL URI
+        self.uri = f"postgresql+psycopg2://{username}:{safe_password}@{host}:{port}/{database}"
         self.db = SQLDatabase.from_uri(self.uri)
+
 
     def get_db(self) -> SQLDatabase:
         """Return the SQLDatabase object."""
@@ -111,80 +125,18 @@ class MSSQLConnector:
             raise Exception(sqlresult)
         return sqlresult
     
-    def generate_answer(self,question,querygenbyllm,query_values,llm):
-        """Answer question using retrieved information as context."""
-        prompt = (
-            "Given the following user question, corresponding SQL query, "
-            "and SQL result, answer the user question.\n\n"
-            f"Question: {question}\n"
-            f"SQL Query: {querygenbyllm}\n"
-            f"SQL Result: {query_values}"
-        )
-        response = llm.invoke(prompt)
-        
-        return {"answer": response.content}
-
-    # async def invoke_streaming(self, question, llm, token_callback):
-    #     attempt = 0
-    #     querygenbyllm = None  # initialize
-    #     max_retries = 2
-
-
-    #     while attempt <= max_retries:
-    #         try:
-    #             if attempt == 0:
-    #                 querygenbyllm = self.write_query(question, llm)
-    #                 querygenbyllm = {"query":"usuffsdf"}
-    #             else:
-    #                 feedback_prompt = (
-    #                     f"The previously generated SQL query failed:\n{querygenbyllm}\n"
-    #                     f"Error message: {last_error}\n"
-    #                     f"Tables/columns allowed: {self.db.get_table_info()}\n"
-    #                     f"Please generate a corrected SQL query for the same user question:\n{question}"
-    #                 )
-    #                 structured_llm = llm.with_structured_output(QueryOutput)
-    #                 querygenbyllm = structured_llm.invoke(feedback_prompt)
-
-    #             sql_text = querygenbyllm["query"] if isinstance(querygenbyllm, dict) else str(querygenbyllm)
-    #             print(Fore.GREEN + f'Generated SQL:\n"{sql_text}"' + Style.RESET_ALL)
-    #             query_values = self.execute_query(querygenbyllm)
-    #             print(Fore.RED + f'Generated values:\n"{query_values}"' + Style.RESET_ALL)
-
-
-    #             answer_prompt = (
+    # def generate_answer(self,question,querygenbyllm,query_values,llm):
+    #     """Answer question using retrieved information as context."""
+    #     prompt = (
     #         "Given the following user question, corresponding SQL query, "
     #         "and SQL result, answer the user question.\n\n"
     #         f"Question: {question}\n"
     #         f"SQL Query: {querygenbyllm}\n"
     #         f"SQL Result: {query_values}"
     #     )
-    #             for token in llm.stream(answer_prompt):
-    #                 token_callback(token)
-    #                 await asyncio.sleep(0)
-
-    #             token_callback(None)  # end of stream
-    #             return
-
-
-    #         except Exception as e:
-    #             last_error = str(e)  # save error for feedback
-    #             print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
-
-    #             if attempt == max_retries:
-    #             # Instead of exposing DB error, generate a general answer
-    #                 fallback_prompt = (
-    #                     f"The user asked: {question}\n"
-    #                     f"However, the system could not retrieve an answer from the database "
-    #                     f"after {max_retries} attempts.\n"
-    #                     "Please provide a polite, general response that acknowledges the failure "
-    #                     "without exposing technical details, and suggest the user try rephrasing."
-    #                 )
-    #                 for token in llm.stream(fallback_prompt):
-    #                     token_callback(token)
-    #                     await asyncio.sleep(0)
-    #                 token_callback(None)
-    #                 return
-    #             attempt += 1
+    #     response = llm.invoke(prompt)
+        
+    #     return {"answer": response.content}
 
 
     async def invoke_streaming(self, question, llm, token_callback):
