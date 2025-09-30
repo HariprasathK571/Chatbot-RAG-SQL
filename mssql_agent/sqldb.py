@@ -48,7 +48,7 @@ class MSSQLConnector:
 
         # Build PostgreSQL URI
         self.uri = f"postgresql+psycopg2://{username}:{safe_password}@{host}:{port}/{database}"
-        self.db = SQLDatabase.from_uri(self.uri)
+        self.db = SQLDatabase.from_uri(self.uri,schema="dbo")
 
 
     def get_db(self) -> SQLDatabase:
@@ -57,7 +57,7 @@ class MSSQLConnector:
     
     def promptemp(self):   
         system_message = """
-        You are an expert SQL Server (MSSQL) query generator.
+        You are an expert SQL (PostgreSQL) query generator.
 
         Given an input question, create a syntactically correct {dialect} query to
         run to help find the answer. Unless the user specifies in his question a
@@ -65,23 +65,24 @@ class MSSQLConnector:
         at most {top_k} results. You can order the results by a relevant column to
         return the most interesting examples in the database.
 
-        Never query for all the columns from a specific table, only ask for a the
-        few relevant columns given the question.
+        Never query for all the columns from a specific table, only ask for a few
+        relevant columns given the question.
 
         Pay attention to use only the column names that you can see in the schema
         description. Be careful to not query for columns that do not exist. Also,
         pay attention to which column is in which table.
 
         Rules:
-        - Always generate T-SQL queries.
-        - Use TOP {top_k} instead of LIMIT.
-        - Do not use LIMIT, OFFSET, or RETURNING clauses (not supported in SQL Server).
+        - Always generate PostgreSQL queries.
+        - Use `LIMIT {top_k}` to restrict the number of rows.
+        - Do not use `TOP`, `RETURNING` (unless needed for INSERT), or any T-SQL-specific clauses.
         - Only use the columns and tables listed in the schema.
         - Never select all columns (*), only the required ones.
-        - Ensure syntax is valid for Microsoft SQL Server.
+        - Ensure syntax is valid for PostgreSQL.
 
         Only use the following tables:
         Table Names: {table_info}
+
 
         """
 
@@ -94,9 +95,6 @@ class MSSQLConnector:
 
         return query_prompt_template
     
-    # def clean_schema(self,raw_schema):
-    # # Remove block comments (/* ... */)
-    #     return re.sub(r"/\*.*?\*/", "", raw_schema, flags=re.DOTALL).strip()
     
 
     def write_query(self,question,llm):
@@ -111,7 +109,7 @@ class MSSQLConnector:
                 "input": question
             }
         )
-        # print(prompt)
+        print(prompt)
         structured_llm = llm.with_structured_output(QueryOutput)
         result = structured_llm.invoke(prompt)
         return result
@@ -124,19 +122,6 @@ class MSSQLConnector:
         if isinstance(sqlresult, str) and sqlresult.lower().startswith("error:"):
             raise Exception(sqlresult)
         return sqlresult
-    
-    # def generate_answer(self,question,querygenbyllm,query_values,llm):
-    #     """Answer question using retrieved information as context."""
-    #     prompt = (
-    #         "Given the following user question, corresponding SQL query, "
-    #         "and SQL result, answer the user question.\n\n"
-    #         f"Question: {question}\n"
-    #         f"SQL Query: {querygenbyllm}\n"
-    #         f"SQL Result: {query_values}"
-    #     )
-    #     response = llm.invoke(prompt)
-        
-    #     return {"answer": response.content}
 
 
     async def invoke_streaming(self, question, llm, token_callback):
