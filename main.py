@@ -41,22 +41,9 @@ async def run_query_stream(req: Request):
     if not question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
 
-    async def event_generator():
-        queue = asyncio.Queue()
+    async def stream_response():
+        async for token in conn.invoke_streaming(question, llm):
+            # Yield each token as JSON line
+            yield json.dumps({"chunk": token}) + "\n"
 
-        # callback to receive tokens from MSSQLConnector
-        def token_callback(token: str):
-            asyncio.create_task(queue.put(token))
-
-        # Start streaming
-        asyncio.create_task(conn.invoke_streaming(question, llm, token_callback))
-
-        while True:
-            token = await queue.get()
-            if token is None:  # end of stream
-                break
-            # yield json.dumps({"chunk": token}) + "\n"
-            text_piece = token.content if hasattr(token, "content") else str(token)
-            yield json.dumps({"chunk": text_piece}) + "\n"
-
-    return StreamingResponse(event_generator(), media_type="application/json")
+    return StreamingResponse(stream_response(), media_type="text/plain")

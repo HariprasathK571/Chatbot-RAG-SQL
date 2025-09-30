@@ -3,6 +3,7 @@ from typing_extensions import TypedDict,Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import ChatPromptTemplate
 from colorama import Fore, Style, init
+from langchain_openai import ChatOpenAI
 init(autoreset=True)  # ensures colors reset after each print
 import asyncio
 import re
@@ -15,27 +16,6 @@ class QueryOutput(TypedDict):
 
 class MSSQLConnector:
     """SQL Server (MSSQL) database connection manager."""
-
-    # def __init__(self, username: str, password: str, host: str, port: int, 
-    #              database: str, driver: str = "ODBC Driver 17 for SQL Server"):
-    #     self.username = username
-    #     self.password = password
-    #     self.host = host
-    #     self.port = port
-    #     self.database = database
-    #     self.driver = driver
-
-    #     # Escape special chars in password for URI (e.g., @, #, etc.)
-    #     safe_password = password.replace("@", "%40")
-
-    #     # Build URI
-    #     self.uri = (
-    #         f"mssql+pyodbc://{username}:{safe_password}"
-    #         f"@{host}:{port}/{database}?driver={driver.replace(' ', '+')}"
-    #     )
-
-    #     # Initialize db connection
-    #     self.db = SQLDatabase.from_uri(self.uri)
     def __init__(self, username: str, password: str, host: str, port: int, database: str):
         self.username = username
         self.password = password
@@ -124,7 +104,7 @@ class MSSQLConnector:
         return sqlresult
 
 
-    async def invoke_streaming(self, question, llm, token_callback):
+    async def invoke_streaming(self, question, llm:ChatOpenAI):
 
         attempt = 0
         querygenbyllm = None  # initialize
@@ -169,10 +149,9 @@ class MSSQLConnector:
                             "Please provide a polite, general response that acknowledges the failure "
                             "without exposing technical details, and suggest the user try rephrasing."
                         )
-                        for token in llm.stream(fallback_prompt):
-                            token_callback(token)
-                            await asyncio.sleep(0)
-                        token_callback(None)
+                        async for token in llm.astream(fallback_prompt):
+                            yield token.content
+
                         return
                     continue  # retry loop
 
@@ -184,18 +163,31 @@ class MSSQLConnector:
                     f"SQL Query: {sql_text}\n"
                     f"SQL Result: {query_values}"
                 )
-                for token in llm.stream(answer_prompt):
-                    token_callback(token)
-                    await asyncio.sleep(0)
+                async for token in llm.astream(answer_prompt):
+                    yield token.content
 
-                token_callback(None)  # end of stream
                 return
-
+            
             except Exception as e:
                 # Catch unexpected errors in query generation
                 last_error = str(e)
                 print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
                 attempt += 1
-                 
+            # 🚨 If loop is exhausted without success (e.g. DB down, LLM issue, etc.)
+        fallback_prompt = (
+            f"The user asked: {question}\n\n"
+            f"The system failed after {max_retries+1} attempts.\n"
+            f"Last recorded error was:\n{last_error}\n\n"
+            "Please summarize this error into a polite and general response for the user, "
+            "without exposing technical details, but still acknowledging that something went wrong. "
+            "Suggest they try again later or rephrase their request."
+        )
+
+        try:
+            async for token in llm.astream(fallback_prompt):
+                yield token.content
+        except Exception:
+            yield "Sorry, something went wrong while processing your request. Please try again later."
+        
 
 
