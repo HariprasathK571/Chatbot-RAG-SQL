@@ -1,3 +1,7 @@
+import logging
+logging.basicConfig()
+logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.INFO)
 from langchain_community.utilities.sql_database import SQLDatabase
 from typing_extensions import TypedDict,Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
@@ -7,6 +11,9 @@ from langchain_openai import ChatOpenAI
 init(autoreset=True)  # ensures colors reset after each print
 import asyncio
 import re
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+
 
 
 class QueryOutput(TypedDict):
@@ -15,25 +22,60 @@ class QueryOutput(TypedDict):
     query: Annotated[str, ..., "Syntactically valid SQL query."]
 
 class MSSQLConnector:
-    """SQL Server (MSSQL) database connection manager."""
+    """Optimized SQL Server (PostgreSQL dialect) connection manager with connection pooling and retry."""
+
     def __init__(self, username: str, password: str, host: str, port: int, database: str):
         self.username = username
-        self.password = password
+        self.password = password.replace("@", "%40")  # escape special chars
         self.host = host
         self.port = port
         self.database = database
+        self._engine = None
+        self._db = None
 
-        # Escape special chars in password for URI (e.g., @, #, etc.)
-        safe_password = password.replace("@", "%40")
+    # ----------------------------------------------------------------
+    # 🧩 DATABASE CONNECTION MANAGEMENT
+    # ----------------------------------------------------------------
+    def _create_engine(self):
+        """Create a SQLAlchemy engine with connection pooling."""
+        uri = f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+        engine = create_engine(
+            uri,
+            pool_pre_ping=True,      # checks if connection is alive
+            pool_size=5,             # maintain 5 connections
+            max_overflow=10,         # allow up to 10 more temporary ones
+            pool_recycle=1800,       # recycle every 30 minutes
+            pool_timeout=30,         # 30s timeout for waiting connections
+        )
+        return engine
 
-        # Build PostgreSQL URI
-        self.uri = f"postgresql+psycopg2://{username}:{safe_password}@{host}:{port}/{database}"
-        self.db = SQLDatabase.from_uri(self.uri,schema="dbo")
+    def connect(self):
+        """Establish a pooled SQL connection if not already active."""
+        if self._db is None:
+            if self._engine is None:
+                self._engine = self._create_engine()
+            self._db = SQLDatabase.from_uri(self._engine.url, schema="dbo")
+        return self._db
+# class MSSQLConnector:
+#     """SQL Server (MSSQL) database connection manager."""
+#     def __init__(self, username: str, password: str, host: str, port: int, database: str):
+#         self.username = username
+#         self.password = password
+#         self.host = host
+#         self.port = port
+#         self.database = database
+
+#         # Escape special chars in password for URI (e.g., @, #, etc.)
+#         safe_password = password.replace("@", "%40")
+
+#         # Build PostgreSQL URI
+#         self.uri = f"postgresql+psycopg2://{username}:{safe_password}@{host}:{port}/{database}"
+#         self.db = SQLDatabase.from_uri(self.uri,schema="dbo")
 
 
-    def get_db(self) -> SQLDatabase:
-        """Return the SQLDatabase object."""
-        return self.db
+#     def get_db(self) -> SQLDatabase:
+#         """Return the SQLDatabase object."""
+#         return self.db
     
     def promptemp(self):   
         system_message = """
@@ -79,13 +121,14 @@ class MSSQLConnector:
 
     def write_query(self,question,llm):
         """Generate SQL query to fetch information."""
+        db = self.connect()
         query_prompt_template = self.promptemp()
         # cleanschema=self.clean_schema(self.db.get_table_info())
         prompt = query_prompt_template.invoke(
             {
-                "dialect": self.db.dialect,
+                "dialect": db.dialect,
                 "top_k": 10,
-                "table_info": self.db.get_table_info(),
+                "table_info": db.get_table_info(),
                 "input": question
             }
         )
@@ -96,7 +139,8 @@ class MSSQLConnector:
     
     def execute_query(self,query):
         """Execute SQL query."""
-        execute_query_tool = QuerySQLDatabaseTool(db= self.db)
+        db = self.connect()
+        execute_query_tool = QuerySQLDatabaseTool(db=db)
         sqlresult =  execute_query_tool.invoke(query)
 
         if isinstance(sqlresult, str) and sqlresult.lower().startswith("error:"):
@@ -109,6 +153,7 @@ class MSSQLConnector:
         attempt = 0
         querygenbyllm = None  # initialize
         max_retries = 1
+        db = self.connect()
 
         while attempt <= max_retries:
             try:
@@ -121,7 +166,7 @@ class MSSQLConnector:
                     feedback_prompt = (
                         f"The previously generated SQL query failed:\n{querygenbyllm}\n"
                         f"Error message: {last_error}\n"
-                        f"Tables/columns allowed: {self.db.get_table_info()}\n"
+                        f"Tables/columns allowed: {db.get_table_info()}\n"
                         f"Please generate a corrected SQL query for the same user question:\n{question}"
                     )
                     structured_llm = llm.with_structured_output(QueryOutput)
@@ -174,6 +219,7 @@ class MSSQLConnector:
                 print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
                 attempt += 1
             # 🚨 If loop is exhausted without success (e.g. DB down, LLM issue, etc.)
+            
         fallback_prompt = (
             f"The user asked: {question}\n\n"
             f"The system failed after {max_retries+1} attempts.\n"
@@ -191,3 +237,180 @@ class MSSQLConnector:
         
 
 
+#-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# import asyncio
+# import re
+# from typing_extensions import TypedDict, Annotated
+# from colorama import Fore, Style, init
+# from langchain_core.prompts import ChatPromptTemplate
+# from langchain_openai import ChatOpenAI
+# from langchain_community.utilities.sql_database import SQLDatabase
+# from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
+# from sqlalchemy import create_engine
+# from sqlalchemy.exc import OperationalError, SQLAlchemyError
+
+# init(autoreset=True)
+
+
+# class QueryOutput(TypedDict):
+#     """Generated SQL query."""
+#     query: Annotated[str, ..., "Syntactically valid SQL query."]
+
+
+# class MSSQLConnector:
+#     """Optimized SQL Server (PostgreSQL dialect) connection manager with connection pooling and retry."""
+
+#     def __init__(self, username: str, password: str, host: str, port: int, database: str):
+#         self.username = username
+#         self.password = password.replace("@", "%40")  # escape special chars
+#         self.host = host
+#         self.port = port
+#         self.database = database
+#         self._engine = None
+#         self._db = None
+
+#     # ----------------------------------------------------------------
+#     # 🧩 DATABASE CONNECTION MANAGEMENT
+#     # ----------------------------------------------------------------
+#     def _create_engine(self):
+#         """Create a SQLAlchemy engine with connection pooling."""
+#         uri = f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+#         engine = create_engine(
+#             uri,
+#             pool_pre_ping=True,      # checks if connection is alive
+#             pool_size=5,             # maintain 5 connections
+#             max_overflow=10,         # allow up to 10 more temporary ones
+#             pool_recycle=1800,       # recycle every 30 minutes
+#             pool_timeout=30,         # 30s timeout for waiting connections
+#         )
+#         return engine
+
+#     def connect(self):
+#         """Establish a pooled SQL connection if not already active."""
+#         if self._db is None:
+#             if self._engine is None:
+#                 self._engine = self._create_engine()
+#             self._db = SQLDatabase.from_uri(self._engine.url, schema="dbo")
+#         return self._db
+
+#     def close(self):
+#         """Dispose of connection pool cleanly."""
+#         if self._engine:
+#             self._engine.dispose()
+#             print(Fore.YELLOW + "Database connection pool closed." + Style.RESET_ALL)
+#         self._engine = None
+#         self._db = None
+
+#     async def __aenter__(self):
+#         """Async context entry."""
+#         self.connect()
+#         return self
+
+#     async def __aexit__(self, exc_type, exc_val, exc_tb):
+#         """Async context exit for auto-close."""
+#         self.close()
+
+#     # ----------------------------------------------------------------
+#     # 🧩 PROMPT MANAGEMENT
+#     # ----------------------------------------------------------------
+#     def get_prompt_template(self) -> ChatPromptTemplate:
+#         """Return a reusable ChatPromptTemplate for SQL generation."""
+#         system_message = """
+#         You are an expert SQL (PostgreSQL) query generator.
+
+#         Given a question, create a syntactically correct {dialect} query.
+#         - Use LIMIT {top_k} (never SELECT *).
+#         - Use only the listed columns and tables.
+#         - Never use T-SQL syntax (e.g., TOP, RETURNING unless needed).
+#         - Only use valid PostgreSQL syntax.
+
+#         Tables available:
+#         {table_info}
+#         """
+
+#         user_prompt = "Question: {input}"
+#         return ChatPromptTemplate([("system", system_message), ("user", user_prompt)])
+
+#     # ----------------------------------------------------------------
+#     # 🧩 QUERY GENERATION
+#     # ----------------------------------------------------------------
+#     def generate_query(self, question: str, llm: ChatOpenAI) -> str:
+#         """Generate SQL query text using the LLM."""
+#         db = self.connect()
+#         prompt_template = self.get_prompt_template()
+#         prompt = prompt_template.invoke(
+#             {
+#                 "dialect": db.dialect,
+#                 "top_k": 10,
+#                 "table_info": db.get_table_info(),
+#                 "input": question
+#             }
+#         )
+#         structured_llm = llm.with_structured_output(QueryOutput)
+#         result = structured_llm.invoke(prompt)
+#         return result.get("query")
+
+#     # ----------------------------------------------------------------
+#     # 🧩 QUERY EXECUTION
+#     # ----------------------------------------------------------------
+#     def execute_query(self, query: str):
+#         """Execute a SQL query safely and return results."""
+#         db = self.connect()
+#         tool = QuerySQLDatabaseTool(db=db)
+
+#         try:
+#             result = tool.invoke(query)
+#             if isinstance(result, str) and result.lower().startswith("error:"):
+#                 raise Exception(result)
+#             return result
+#         except (OperationalError, SQLAlchemyError) as e:
+#             print(Fore.RED + f"Database execution error: {e}" + Style.RESET_ALL)
+#             self.close()
+#             # Reconnect and retry once
+#             self.connect()
+#             result = tool.invoke(query)
+#             return result
+
+#     # ----------------------------------------------------------------
+#     # 🧩 STREAMING INVOCATION
+#     # ----------------------------------------------------------------
+#     async def invoke_streaming(self, question: str, llm: ChatOpenAI):
+#         """Generate SQL, execute it, and stream LLM-generated answers."""
+#         attempt = 0
+#         max_retries = 1
+#         last_error = None
+
+#         while attempt <= max_retries:
+#             try:
+#                 query = self.generate_query(question, llm)
+#                 print(Fore.GREEN + f"Generated SQL:\n{query}" + Style.RESET_ALL)
+
+#                 query_result = self.execute_query(query)
+#                 print(Fore.CYAN + f"Query Result:\n{query_result}" + Style.RESET_ALL)
+
+#                 # ✅ Generate final streamed answer
+#                 answer_prompt = (
+#                     "Given the question, SQL query, and its result, "
+#                     "provide a natural language answer:\n\n"
+#                     f"Question: {question}\nSQL: {query}\nResult: {query_result}"
+#                 )
+
+#                 async for token in llm.astream(answer_prompt):
+#                     yield token.content
+#                 return
+
+#             except Exception as e:
+#                 last_error = str(e)
+#                 print(Fore.RED + f"Attempt {attempt + 1} failed: {last_error}" + Style.RESET_ALL)
+#                 attempt += 1
+#                 await asyncio.sleep(1)  # avoid hammering DB
+
+#         # Fallback polite response
+#         fallback = (
+#             f"Sorry, I couldn't process your request after several attempts.\n"
+#             f"Please rephrase your question or try again later."
+#         )
+#         async for token in llm.astream(fallback):
+#             yield token.content

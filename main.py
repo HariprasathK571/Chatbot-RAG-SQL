@@ -24,11 +24,18 @@ llm= ChatOpenAI(
 #     port=1433,
 #     database="CT_Demo"
 # )
-
-#Postgres
+#postgres - direct connection
+# conn = MSSQLConnector(
+#     username="postgres",
+#     password="mysecretpassword",
+#     host="localhost",
+#     port=3005,
+#     database="CT_Demo"
+# )
+#Postgres - readonly access
 conn = MSSQLConnector(
-    username="postgres",
-    password="mysecretpassword",
+    username="readonly_user",
+    password="Hari571",
     host="localhost",
     port=3005,
     database="CT_Demo"
