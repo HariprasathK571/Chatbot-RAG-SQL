@@ -15,23 +15,7 @@ llm= ChatOpenAI(
         openai_api_base="https://openrouter.ai/api/v1",
         model="meta-llama/llama-3.3-70b-instruct"
         )
-#MS-SQL
 
-# conn = MSSQLConnector(
-#     username="sa",
-#     password="sa@12309876",
-#     host="192.168.152.22",
-#     port=1433,
-#     database="CT_Demo"
-# )
-#postgres - direct connection
-# conn = MSSQLConnector(
-#     username="postgres",
-#     password="mysecretpassword",
-#     host="localhost",
-#     port=3005,
-#     database="CT_Demo"
-# )
 #Postgres - readonly access
 conn = MSSQLConnector(
     username="readonly_user",
@@ -40,7 +24,7 @@ conn = MSSQLConnector(
     port=3005,
     database="CT_Demo"
 )
-    
+   
 @app.post("/query_stream")
 async def run_query_stream(req: Request):
     data = await req.json()
