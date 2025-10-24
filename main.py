@@ -11,19 +11,27 @@ app = FastAPI(title="SQL LLM API")
 
 
 llm= ChatOpenAI(
-        openai_api_key="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",
+        openai_api_key="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",
         openai_api_base="https://openrouter.ai/api/v1",
         model="meta-llama/llama-3.3-70b-instruct"
         )
 
-#Postgres - readonly access
 conn = MSSQLConnector(
-    username="readonly_user",
-    password="Hari571",
-    host="localhost",
-    port=3005,
-    database="CT_Demo"
+    username="sa",
+    password="sa@12309876",
+    host="192.168.152.22",
+    port=1433,
+    database="SONA-MESX0-QA-TEST-SAP"
 )
+
+# #Postgres - readonly access
+# conn = MSSQLConnector(
+#     username="readonly_user",
+#     password="Hari571",
+#     host="localhost",
+#     port=3005,
+#     database="CT_Demo"
+# )
    
 @app.post("/query_stream")
 async def run_query_stream(req: Request):

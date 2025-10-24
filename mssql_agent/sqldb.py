@@ -1,7 +1,7 @@
 import logging
-logging.basicConfig()
-logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
-logging.getLogger("sqlalchemy.pool").setLevel(logging.INFO)
+# logging.basicConfig()
+# logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+# logging.getLogger("sqlalchemy.pool").setLevel(logging.INFO)
 from langchain_community.utilities.sql_database import SQLDatabase
 from typing_extensions import TypedDict,Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 init(autoreset=True)  # ensures colors reset after each print
 import asyncio
 import re
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine,inspect,text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 
@@ -24,7 +24,7 @@ class QueryOutput(TypedDict):
 class MSSQLConnector:
     """Optimized SQL Server (PostgreSQL dialect) connection manager with connection pooling and retry."""
 
-    def __init__(self, username: str, password: str, host: str, port: int, database: str):
+    def __init__(self, username: str, password: str, host: str, port: int, database: str, driver: str = "ODBC Driver 17 for SQL Server"):
         self.username = username
         self.password = password.replace("@", "%40")  # escape special chars
         self.host = host
@@ -32,13 +32,19 @@ class MSSQLConnector:
         self.database = database
         self._engine = None
         self._db = None
-
+        self.driver = driver
+        self._schema = None
     # ----------------------------------------------------------------
     # 🧩 DATABASE CONNECTION MANAGEMENT
     # ----------------------------------------------------------------
     def _create_engine(self):
         """Create a SQLAlchemy engine with connection pooling."""
-        uri = f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+        # uri = f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+
+        uri = (
+            f"mssql+pyodbc://{self.username}:{self.password}"
+            f"@{self.host}:{self.port}/{self.database}?driver={self.driver.replace(' ', '+')}"
+        )
         engine = create_engine(
             uri,
             pool_pre_ping=True,      # checks if connection is alive
@@ -54,8 +60,65 @@ class MSSQLConnector:
         if self._db is None:
             if self._engine is None:
                 self._engine = self._create_engine()
-            self._db = SQLDatabase.from_uri(self._engine.url, schema="dbo")
+            self._db = SQLDatabase.from_uri(self._engine.url)
         return self._db
+    
+    def export_schema_with_samples(self,engine = None, sample_limit=2):
+        """
+        Return a formatted string containing all schemas, tables, 
+        CREATE TABLE definitions, and sample rows.
+        """
+        # ensure we have an engine
+        if engine is None:
+            if self._engine is None:
+                self._engine = self._create_engine()
+            engine = self._engine
+
+        inspector = inspect(engine)
+        output = []  # Collect all text lines here
+
+        with engine.connect() as conn:
+            for schema in inspector.get_schema_names():
+                output.append(f"-- Schema: {schema}")
+                for table_name in inspector.get_table_names(schema=schema):
+                    output.append(f"\n-- Table: {schema}.{table_name}")
+                    
+                    # 1️⃣ Get columns and their definitions
+                    columns = inspector.get_columns(table_name, schema=schema)
+                    
+                    ddl = f"CREATE TABLE {schema}.[{table_name}] (\n"
+                    column_defs = []
+                    for col in columns:
+                        col_def = f"    [{col['name']}] {col['type']}"
+                        if not col.get("nullable", True):
+                            col_def += " NOT NULL"
+                        column_defs.append(col_def)
+                    
+                    ddl += ",\n".join(column_defs) + "\n);"
+                    output.append(ddl)
+                    
+                    # 2️⃣ Fetch sample rows
+                    try:
+                        result = conn.execute(text(f"SELECT TOP {sample_limit} * FROM {schema}.[{table_name}]"))
+                        rows = result.fetchall()
+                        if rows:
+                            cols = result.keys()
+                            output.append(f"\n/*\n{len(rows)} rows from {table_name} table:")
+                            output.append("\t".join(cols))
+                            for row in rows:
+                                output.append("\t".join(str(x) for x in row))
+                            output.append("*/\n")
+                    except Exception as e:
+                        output.append(f"/* Could not fetch rows: {e} */\n")
+        
+        # Return everything as one string
+        return "\n".join(output)
+    
+    @property
+    def schema(self):
+        if self._schema is None:
+            self._schema = self.export_schema_with_samples(self._engine)
+        return self._schema
 # class MSSQLConnector:
 #     """SQL Server (MSSQL) database connection manager."""
 #     def __init__(self, username: str, password: str, host: str, port: int, database: str):
@@ -78,8 +141,36 @@ class MSSQLConnector:
 #         return self.db
     
     def promptemp(self):   
-        system_message = """
-        You are an expert SQL (PostgreSQL) query generator.
+        # system_message = """
+        # You are an expert SQL (PostgreSQL) query generator.
+
+        # Given an input question, create a syntactically correct {dialect} query to
+        # run to help find the answer. Unless the user specifies in his question a
+        # specific number of examples they wish to obtain, always limit your query to
+        # at most {top_k} results. You can order the results by a relevant column to
+        # return the most interesting examples in the database.
+
+        # Never query for all the columns from a specific table, only ask for a few
+        # relevant columns given the question.
+
+        # Pay attention to use only the column names that you can see in the schema
+        # description. Be careful to not query for columns that do not exist. Also,
+        # pay attention to which column is in which table.
+
+        # Rules:
+        # - Always generate PostgreSQL queries.
+        # - Use `LIMIT {top_k}` to restrict the number of rows.
+        # - Do not use `TOP`, `RETURNING` (unless needed for INSERT), or any T-SQL-specific clauses.
+        # - Only use the columns and tables listed in the schema.
+        # - Never select all columns (*), only the required ones.
+        # - Ensure syntax is valid for PostgreSQL.
+
+        # Only use the following tables:
+        # Table Names: {table_info}
+
+
+        # """
+        system_message = """You are an expert SQL Server (MSSQL) query generator.
 
         Given an input question, create a syntactically correct {dialect} query to
         run to help find the answer. Unless the user specifies in his question a
@@ -87,26 +178,23 @@ class MSSQLConnector:
         at most {top_k} results. You can order the results by a relevant column to
         return the most interesting examples in the database.
 
-        Never query for all the columns from a specific table, only ask for a few
-        relevant columns given the question.
+        Never query for all the columns from a specific table, only ask for a the
+        few relevant columns given the question.
 
         Pay attention to use only the column names that you can see in the schema
         description. Be careful to not query for columns that do not exist. Also,
         pay attention to which column is in which table.
 
         Rules:
-        - Always generate PostgreSQL queries.
-        - Use `LIMIT {top_k}` to restrict the number of rows.
-        - Do not use `TOP`, `RETURNING` (unless needed for INSERT), or any T-SQL-specific clauses.
+        - Always generate T-SQL queries.
+        - Use TOP {top_k} instead of LIMIT.
+        - Do not use LIMIT, OFFSET, or RETURNING clauses (not supported in SQL Server).
         - Only use the columns and tables listed in the schema.
         - Never select all columns (*), only the required ones.
-        - Ensure syntax is valid for PostgreSQL.
+        - Ensure syntax is valid for Microsoft SQL Server.
 
         Only use the following tables:
-        Table Names: {table_info}
-
-
-        """
+        Table Names: {table_info}"""
 
         user_prompt = "Question: {input}"
 
@@ -122,13 +210,14 @@ class MSSQLConnector:
     def write_query(self,question,llm):
         """Generate SQL query to fetch information."""
         db = self.connect()
+        DB_schema = self.schema
         query_prompt_template = self.promptemp()
         # cleanschema=self.clean_schema(self.db.get_table_info())
         prompt = query_prompt_template.invoke(
             {
                 "dialect": db.dialect,
                 "top_k": 10,
-                "table_info": db.get_table_info(),
+                "table_info": DB_schema,
                 "input": question
             }
         )
