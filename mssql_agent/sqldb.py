@@ -63,41 +63,58 @@ class MSSQLConnector:
             self._db = SQLDatabase.from_uri(self._engine.url)
         return self._db
     
-    def export_schema_with_samples(self,engine = None, sample_limit=2):
+    def export_schema_with_samples(self,engine,sample_limit=2):
         """
         Return a formatted string containing all schemas, tables, 
-        CREATE TABLE definitions, and sample rows.
+        CREATE TABLE definitions (with relationships), and sample rows.
         """
-        # ensure we have an engine
-        if engine is None:
-            if self._engine is None:
-                self._engine = self._create_engine()
-            engine = self._engine
-
         inspector = inspect(engine)
-        output = []  # Collect all text lines here
+        output = []
 
         with engine.connect() as conn:
             for schema in inspector.get_schema_names():
                 output.append(f"-- Schema: {schema}")
+                
                 for table_name in inspector.get_table_names(schema=schema):
                     output.append(f"\n-- Table: {schema}.{table_name}")
-                    
-                    # 1️⃣ Get columns and their definitions
+
+                    # 1️⃣ Columns
                     columns = inspector.get_columns(table_name, schema=schema)
-                    
                     ddl = f"CREATE TABLE {schema}.[{table_name}] (\n"
                     column_defs = []
+
                     for col in columns:
                         col_def = f"    [{col['name']}] {col['type']}"
                         if not col.get("nullable", True):
                             col_def += " NOT NULL"
                         column_defs.append(col_def)
+
+                    # 2️⃣ Primary Key
+                    pk_constraint = inspector.get_pk_constraint(table_name, schema=schema)
+                    if pk_constraint and pk_constraint.get("constrained_columns"):
+                        pk_cols = ", ".join(f"[{col}]" for col in pk_constraint["constrained_columns"])
+                        pk_name = pk_constraint.get("name", f"PK_{table_name}")
+                        column_defs.append(f"    CONSTRAINT [{pk_name}] PRIMARY KEY CLUSTERED ({pk_cols})")
+
                     
+                    # 3️⃣ Foreign Keys
+                    fks = inspector.get_foreign_keys(table_name, schema=schema)
+                    for fk in fks:
+                        fk_cols = ", ".join(f"[{col}]" for col in fk["constrained_columns"])
+                        ref_schema = fk.get("referred_schema", schema)
+                        ref_table = fk["referred_table"]
+                        ref_cols = ", ".join(f"[{col}]" for col in fk["referred_columns"])
+                        fk_name = fk.get("name", f"FK_{table_name}_{ref_table}_{'_'.join(fk['constrained_columns'])}")
+                        ondelete = f" ON DELETE {fk.get('options', {}).get('ondelete', 'NO ACTION')}"
+                        column_defs.append(
+                            f"    CONSTRAINT [{fk_name}] FOREIGN KEY({fk_cols}) REFERENCES {ref_schema}.[{ref_table}] ({ref_cols}){ondelete}"
+                        )
+
                     ddl += ",\n".join(column_defs) + "\n);"
                     output.append(ddl)
-                    
-                    # 2️⃣ Fetch sample rows
+
+        
+                    # 4️⃣ Sample Rows
                     try:
                         result = conn.execute(text(f"SELECT TOP {sample_limit} * FROM {schema}.[{table_name}]"))
                         rows = result.fetchall()
@@ -106,13 +123,13 @@ class MSSQLConnector:
                             output.append(f"\n/*\n{len(rows)} rows from {table_name} table:")
                             output.append("\t".join(cols))
                             for row in rows:
-                                output.append("\t".join(str(x) for x in row))
+                                output.append("\t".join(str(x) if x is not None else "NULL" for x in row))
                             output.append("*/\n")
                     except Exception as e:
                         output.append(f"/* Could not fetch rows: {e} */\n")
-        
-        # Return everything as one string
+
         return "\n".join(output)
+
     
     @property
     def schema(self):

@@ -17,7 +17,7 @@ if st.button("Run Query"):
     else:
         try:
             response = requests.post(
-                "http://127.0.0.1:8000/query_stream",
+                "http://127.0.0.1:8000//api/chatbot/query_stream",
                 json={"question": question},
                 stream=True
             )
