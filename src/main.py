@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from chatbot.routes import chatbot_router
+from src.chatbot.routes import chatbot_router
 app = FastAPI(title="SQL LLM API")
 
 version_prefix =f"/api"

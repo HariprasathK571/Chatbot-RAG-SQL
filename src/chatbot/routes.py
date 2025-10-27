@@ -1,10 +1,11 @@
 from fastapi import APIRouter,HTTPException,Request,Depends
 from fastapi.responses import StreamingResponse
 from langchain_openai import ChatOpenAI
-from sqlmodel.ext.asyncio.session import AsyncSession
+# from sqlmodel.ext.asyncio.session import AsyncSession
 import json
 from .service import MSSQLConnector
-from db.core import get_session
+from src.db.core import DbSession
+
 
 conn = MSSQLConnector()
 
@@ -17,14 +18,14 @@ llm= ChatOpenAI(
         )
 
 @chatbot_router.post("/query_stream")
-async def run_query_stream(req: Request,session: AsyncSession = Depends(get_session)):
+async def run_query_stream(req: Request,db: DbSession):
     data = await req.json()
     question = data.get("question")
     if not question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
 
     async def stream_response():
-        async for token in conn.invoke_streaming(question, llm,session):
+        async for token in conn.invoke_streaming(question, llm,db):
             # Yield each token as JSON line
             yield json.dumps({"chunk": token}) + "\n"
 

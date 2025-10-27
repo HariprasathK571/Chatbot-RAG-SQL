@@ -5,8 +5,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from sqlalchemy import text, inspect
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel.ext.asyncio.session import AsyncSession
-from db.core import async_engine # ✅ shared async engine + session
+from sqlalchemy.orm import Session
+# from sqlmodel.ext.asyncio.session import AsyncSession
+from src.db.core import engine # ✅ shared async engine + session
 # import asyncio
 #get_session 
 init(autoreset=True)
@@ -26,14 +27,14 @@ class MSSQLConnector:
     # ----------------------------------------------------------------
     # 🧩 SCHEMA EXPORT
     # ----------------------------------------------------------------
-    async def export_schema_with_samples(self, sample_limit=2):
+    def export_schema_with_samples(self, sample_limit=2):
         """
         Return formatted schema with table definitions and sample rows (async).
         """
-        inspector = inspect(async_engine.sync_engine)
+        inspector = inspect(engine)
         output = []
 
-        async with async_engine.connect() as conn:
+        with engine.connect() as conn:
             for schema in inspector.get_schema_names():
                 output.append(f"-- Schema: {schema}")
 
@@ -76,7 +77,7 @@ class MSSQLConnector:
 
                     # 4️⃣ Sample Rows
                     try:
-                        result = await conn.execute(text(f"SELECT TOP {sample_limit} * FROM {schema}.[{table_name}]"))
+                        result = conn.execute(text(f"SELECT TOP {sample_limit} * FROM {schema}.[{table_name}]"))
                         rows = result.fetchall()
                         if rows:
                             cols = result.keys()
@@ -91,10 +92,10 @@ class MSSQLConnector:
         return "\n".join(output)
 
     @property
-    async def schema(self):
+    def schema(self):
         """Return cached schema (generate once)."""
         if self._schema is None:
-            self._schema = await self.export_schema_with_samples()
+            self._schema = self.export_schema_with_samples()
         return self._schema
 
     # ----------------------------------------------------------------
@@ -135,9 +136,9 @@ class MSSQLConnector:
     # ----------------------------------------------------------------
     # 🧩 QUERY GENERATION
     # ----------------------------------------------------------------
-    async def write_query(self, question, llm: ChatOpenAI):
+    def write_query(self, question, llm: ChatOpenAI):
         """Generate SQL query using LLM and live schema."""
-        DB_schema = await self.schema
+        DB_schema = self.schema
         query_prompt_template = self.promptemp()
 
         prompt = query_prompt_template.invoke(
@@ -156,18 +157,28 @@ class MSSQLConnector:
     # ----------------------------------------------------------------
     # 🧩 QUERY EXECUTION (Async)
     # ----------------------------------------------------------------
-    async def execute_query(self, session: AsyncSession, query):
-        """Execute a raw SQL query asynchronously using SQLModel AsyncSession."""
+    # async def execute_query(self, db :Session, query):
+    #     """Execute a raw SQL query asynchronously using SQLModel AsyncSession."""
+    #     try:
+    #         result = await db.exec(text(query))
+    #         rows = result.all()
+    #         return [dict(row._mapping) for row in rows]
+    #     except SQLAlchemyError as e:
+    #         raise Exception(f"Database error: {e}")
+        
+    def execute_query(self, db: Session, query: str):
+        """Execute a raw SQL query synchronously using SQLAlchemy Session."""
         try:
-            result = await session.exec(text(query))
-            rows = result.all()
+            result = db.execute(text(query))
+            rows = result.fetchall()
             return [dict(row._mapping) for row in rows]
         except SQLAlchemyError as e:
             raise Exception(f"Database error: {e}")
+
         
     # 🧩 MAIN STREAMING LOGIC
     # ----------------------------------------------------------------
-    async def invoke_streaming(self, question, llm: ChatOpenAI,session: AsyncSession):
+    async def invoke_streaming(self, question, llm: ChatOpenAI,db: Session):
         """Generate query, execute asynchronously, and stream LLM answer."""
         attempt = 0
         max_retries = 1
@@ -196,7 +207,7 @@ class MSSQLConnector:
 
                 # Execute SQL
                 try:
-                    query_values = await self.execute_query(session, sql_text)
+                    query_values = self.execute_query(db, sql_text)
                     print(Fore.RED + f'Query Result:\n"{query_values}"' + Style.RESET_ALL)
                 except Exception as sql_error:
                     last_error = str(sql_error)
