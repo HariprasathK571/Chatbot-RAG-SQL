@@ -5,10 +5,10 @@ from langchain_openai import ChatOpenAI
 import json
 from .service import MSSQLConnector
 from src.db.core import DbSession
+from src.chatbot.schema import ChatbotuserQuery
 
 
 conn = MSSQLConnector()
-
 chatbot_router = APIRouter()
 
 llm= ChatOpenAI(
@@ -18,14 +18,16 @@ llm= ChatOpenAI(
         )
 
 @chatbot_router.post("/query_stream")
-async def run_query_stream(req: Request,db: DbSession):
-    data = await req.json()
-    question = data.get("question")
-    if not question:
+async def run_query_stream(req: ChatbotuserQuery,db: DbSession):
+    # data = await req.json()
+    # question = req.get("question")
+    if not req.question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
+    # if not question:
+    #     raise HTTPException(status_code=400, detail="Missing 'question'")
 
     async def stream_response():
-        async for token in conn.invoke_streaming(question, llm,db):
+        async for token in conn.invoke_streaming(req.question, llm,db):
             # Yield each token as JSON line
             yield json.dumps({"chunk": token}) + "\n"
 

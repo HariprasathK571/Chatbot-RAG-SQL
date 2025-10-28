@@ -38,7 +38,7 @@ load_dotenv()
 # DATABASE_URL = "sqlite:///./todosapp.db"
 
 """ Or hard code PostgreSQL here """
-DATABASE_URL = "mssql+pyodbc://sa:sa%4012309876@192.168.152.22:1433/SONA-MESX0-QA-TEST-SAP?driver=ODBC+Driver+17+for+SQL+Server"
+DATABASE_URL = "mssql+pyodbc://sa:sa%4012309876@192.168.152.22:1433/CT_Demo?driver=ODBC+Driver+17+for+SQL+Server"
 
 engine = create_engine(DATABASE_URL)
 

@@ -136,7 +136,7 @@ class MSSQLConnector:
     # ----------------------------------------------------------------
     # 🧩 QUERY GENERATION
     # ----------------------------------------------------------------
-    def write_query(self, question, llm: ChatOpenAI):
+    async def write_query(self, question, llm: ChatOpenAI):
         """Generate SQL query using LLM and live schema."""
         DB_schema = self.schema
         query_prompt_template = self.promptemp()
@@ -166,7 +166,7 @@ class MSSQLConnector:
     #     except SQLAlchemyError as e:
     #         raise Exception(f"Database error: {e}")
         
-    def execute_query(self, db: Session, query: str):
+    async def execute_query(self, db: Session, query: str):
         """Execute a raw SQL query synchronously using SQLAlchemy Session."""
         try:
             result = db.execute(text(query))
@@ -187,7 +187,7 @@ class MSSQLConnector:
         while attempt <= max_retries:
             try:
                 if attempt == 0:
-                    querygenbyllm = self.write_query(question, llm)
+                    querygenbyllm = await self.write_query(question, llm)
                     # querygenbyllm = {"query":"usuffsdf"}
                 else:
                     # regenerate query based on last error
@@ -207,7 +207,7 @@ class MSSQLConnector:
 
                 # Execute SQL
                 try:
-                    query_values = self.execute_query(db, sql_text)
+                    query_values = await self.execute_query(db, sql_text)
                     print(Fore.RED + f'Query Result:\n"{query_values}"' + Style.RESET_ALL)
                 except Exception as sql_error:
                     last_error = str(sql_error)
