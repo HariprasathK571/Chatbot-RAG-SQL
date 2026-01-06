@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy import text, inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
-from db.core import async_engine # ✅ shared async engine + session
+from src.db.core import async_engine, sync_url# ✅ shared async engine + session
 # import asyncio
 #get_session 
 init(autoreset=True)
@@ -30,7 +30,7 @@ class MSSQLConnector:
         """
         Return formatted schema with table definitions and sample rows (async).
         """
-        inspector = inspect(async_engine.sync_engine)
+        inspector = inspect(sync_url)
         output = []
 
         async with async_engine.connect() as conn:
@@ -94,14 +94,152 @@ class MSSQLConnector:
     async def schema(self):
         """Return cached schema (generate once)."""
         if self._schema is None:
-            self._schema = await self.export_schema_with_samples()
+            self._schema = """
+-- Table: public.customers
+-- Purpose: Stores individuals who are customers of the bank.
+-- Used when questions are about people, users, customer identity, or ownership.
+
+CREATE TABLE public.customers (
+    customer_id BIGSERIAL NOT NULL,
+
+    -- Human-readable full name of the customer.
+    -- Use when output requires identifying the person.
+    full_name VARCHAR(150) NOT NULL,
+
+    -- Contact email address.
+    -- Informational only; should not be used for analytics.
+    email VARCHAR(200),
+
+    -- Timestamp when the customer joined the bank.
+    -- Used for tenure or longevity-based questions.
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_customers PRIMARY KEY (customer_id)
+);
+
+-- Table: public.accounts
+-- Purpose: Represents bank accounts owned by customers.
+-- Used when questions involve balances, account status, or account ownership.
+
+CREATE TABLE public.accounts (
+    account_id BIGSERIAL NOT NULL,
+
+    -- Identifies the owner of the account.
+    -- Used to associate accounts with a customer.
+    customer_id BIGINT NOT NULL,
+
+    -- Category of the account (Savings, Current).
+    -- Used for segmentation and eligibility logic.
+    account_type VARCHAR(50) NOT NULL,
+
+    -- Current available balance in the account.
+    -- Represents present state only; do not use for historical analysis.
+    balance NUMERIC(18,2) NOT NULL,
+
+    -- Lifecycle state of the account (Active, Dormant, Closed).
+    -- Used to filter usable or valid accounts.
+    status VARCHAR(30) NOT NULL,
+
+    -- Date when the account was opened.
+    -- Used for account age or longevity analysis.
+    opened_date DATE NOT NULL,
+
+    CONSTRAINT pk_accounts PRIMARY KEY (account_id),
+
+    CONSTRAINT fk_accounts_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES public.customers (customer_id)
+        ON DELETE NO ACTION
+);
+
+-- Table: public.transactions
+-- Purpose: Stores all monetary inflow and outflow activity.
+-- Used for spending analysis, income tracking, and transaction history.
+
+CREATE TABLE public.transactions (
+    transaction_id BIGSERIAL NOT NULL,
+
+    -- Account on which the transaction occurred.
+    -- Used to associate financial activity with customers.
+    account_id BIGINT NOT NULL,
+
+    -- Date and time when the transaction occurred.
+    -- Primary column for time-based queries (recent, monthly, yearly).
+    transaction_date TIMESTAMP NOT NULL,
+
+    -- Monetary value of the transaction.
+    -- Negative value indicates money leaving the account.
+    -- Positive value indicates money entering the account.
+    amount NUMERIC(18,2) NOT NULL,
+
+    -- Business classification of the transaction.
+    -- Debit = spending, Credit = income.
+    transaction_type VARCHAR(20) NOT NULL,
+
+    -- Merchant or source associated with the transaction.
+    -- Used for merchant-wise spending analysis.
+    merchant_name VARCHAR(150),
+
+    -- Execution result of the transaction (Success, Failed, Pending).
+    -- Used for reliability, error detection, and risk monitoring.
+    transaction_status VARCHAR(30) NOT NULL,
+
+    CONSTRAINT pk_transactions PRIMARY KEY (transaction_id),
+
+    CONSTRAINT fk_transactions_account
+        FOREIGN KEY (account_id)
+        REFERENCES public.accounts (account_id)
+        ON DELETE NO ACTION
+);
+
+-- Table: public.transfers
+-- Purpose: Records internal fund movements between accounts.
+-- Used when money moves inside the bank rather than via merchants.
+
+CREATE TABLE public.transfers (
+    transfer_id BIGSERIAL NOT NULL,
+
+    -- Source account from which money was sent.
+    -- Represents outflow of funds.
+    from_account_id BIGINT NOT NULL,
+
+    -- Destination account that received money.
+    -- Represents inflow of funds.
+    to_account_id BIGINT NOT NULL,
+
+    -- Amount of money transferred between accounts.
+    -- Always a positive value.
+    transfer_amount NUMERIC(18,2) NOT NULL,
+
+    -- Date and time when the transfer occurred.
+    -- Used for time-based transfer analysis.
+    transfer_date TIMESTAMP NOT NULL,
+
+    -- Current state of the transfer (Completed, Pending, Failed).
+    -- Used for operational monitoring.
+    transfer_status VARCHAR(30) NOT NULL,
+
+    CONSTRAINT pk_transfers PRIMARY KEY (transfer_id),
+
+    CONSTRAINT fk_transfers_from_account
+        FOREIGN KEY (from_account_id)
+        REFERENCES public.accounts (account_id)
+        ON DELETE NO ACTION,
+
+    CONSTRAINT fk_transfers_to_account
+        FOREIGN KEY (to_account_id)
+        REFERENCES public.accounts (account_id)
+        ON DELETE NO ACTION
+);
+
+"""
         return self._schema
 
     # ----------------------------------------------------------------
     # 🧩 PROMPT TEMPLATE
     # ----------------------------------------------------------------
     def promptemp(self):
-        system_message = """You are an expert SQL Server (MSSQL) query generator.
+        system_message = """You are an expert SQL (PostgreSQL) query generator.
 
         Given an input question, create a syntactically correct {dialect} query to
         run to help find the answer. Unless the user specifies in his question a
@@ -109,20 +247,20 @@ class MSSQLConnector:
         at most {top_k} results. You can order the results by a relevant column to
         return the most interesting examples in the database.
 
-        Never query for all the columns from a specific table, only ask for a the
-        few relevant columns given the question.
+        Never query for all the columns from a specific table, only ask for a few
+        relevant columns given the question.
 
         Pay attention to use only the column names that you can see in the schema
         description. Be careful to not query for columns that do not exist. Also,
         pay attention to which column is in which table.
 
         Rules:
-        - Always generate T-SQL queries.
-        - Use TOP {top_k} instead of LIMIT.
-        - Do not use LIMIT, OFFSET, or RETURNING clauses (not supported in SQL Server).
+        - Always generate PostgreSQL queries.
+        - Use `LIMIT {top_k}` to restrict the number of rows.
+        - Do not use `TOP`, `RETURNING` (unless needed for INSERT), or any T-SQL-specific clauses.
         - Only use the columns and tables listed in the schema.
         - Never select all columns (*), only the required ones.
-        - Ensure syntax is valid for Microsoft SQL Server.
+        - Ensure syntax is valid for PostgreSQL.
 
         Only use the following tables:
         Table Names: {table_info}"""
@@ -142,7 +280,7 @@ class MSSQLConnector:
 
         prompt = query_prompt_template.invoke(
             {
-                "dialect": "MSSQL",
+                "dialect": "postgres",
                 "top_k": 10,
                 "table_info": DB_schema,
                 "input": question,
@@ -172,11 +310,12 @@ class MSSQLConnector:
         attempt = 0
         max_retries = 1
         last_error = None
+        querygenbyllm = None
 
         while attempt <= max_retries:
             try:
                 if attempt == 0:
-                    querygenbyllm = self.write_query(question, llm)
+                    querygenbyllm = await self.write_query(question, llm)
                     # querygenbyllm = {"query":"usuffsdf"}
                 else:
                     # regenerate query based on last error

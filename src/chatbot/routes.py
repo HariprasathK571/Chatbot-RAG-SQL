@@ -4,16 +4,16 @@ from langchain_openai import ChatOpenAI
 from sqlmodel.ext.asyncio.session import AsyncSession
 import json
 from .service import MSSQLConnector
-from db.core import get_session
+from src.db.core import get_session
 
 conn = MSSQLConnector()
 
 chatbot_router = APIRouter()
 
 llm= ChatOpenAI(
-        openai_api_key="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",
+        openai_api_key="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",
         openai_api_base="https://openrouter.ai/api/v1",
-        model="meta-llama/llama-3.3-70b-instruct"
+        model="openai/gpt-4o-mini"
         )
 
 @chatbot_router.post("/query_stream")

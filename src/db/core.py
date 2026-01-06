@@ -3,9 +3,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, create_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from config import Config
+# from config import Config
 
-async_engine = AsyncEngine(create_engine(url=Config.DATABASE_URL))
+sync_url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/Banking-Transaction"
+
+async_engine = AsyncEngine(create_engine(url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/Banking-Transaction"))
 
 
 async def init_db() -> None:
