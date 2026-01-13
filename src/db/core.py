@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 sync_url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/Banking-Transaction"
 
-async_engine = AsyncEngine(create_engine(url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/Banking-Transaction"))
+async_engine = AsyncEngine(create_engine(url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/HBA"))
 
 
 async def init_db() -> None:

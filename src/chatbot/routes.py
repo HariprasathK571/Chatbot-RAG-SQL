@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 import json
 from .service import MSSQLConnector
 from src.db.core import get_session
+from src.chatbot.schema import ChatbotuserQuery
 
 conn = MSSQLConnector()
 
@@ -17,14 +18,13 @@ llm= ChatOpenAI(
         )
 
 @chatbot_router.post("/query_stream")
-async def run_query_stream(req: Request,session: AsyncSession = Depends(get_session)):
-    data = await req.json()
-    question = data.get("question")
-    if not question:
-        raise HTTPException(status_code=400, detail="Missing 'question'")
+async def run_query_stream(req: ChatbotuserQuery,session: AsyncSession = Depends(get_session)):
 
+    if not req.question:
+        raise HTTPException(status_code=400, detail="Missing 'question'")
+    
     async def stream_response():
-        async for token in conn.invoke_streaming(question, llm,session):
+        async for token in conn.invoke_streaming(req.question, llm,session):
             # Yield each token as JSON line
             yield json.dumps({"chunk": token}) + "\n"
 

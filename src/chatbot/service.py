@@ -95,53 +95,89 @@ class MSSQLConnector:
         """Return cached schema (generate once)."""
         if self._schema is None:
             self._schema = """
+-- ============================================================
+-- PostgreSQL Schema: public
+-- ============================================================
+
+-- Table: public.branches
+-- Purpose: Stores branch master data.
+-- Used when questions are about branch performance, customer distribution, or branch KPIs.
+
+CREATE TABLE public.branches (
+    branch_id BIGSERIAL NOT NULL,
+
+    -- Unique short branch code.
+    branch_code VARCHAR(20) NOT NULL UNIQUE,
+
+    -- Name of the branch.
+    branch_name VARCHAR(150) NOT NULL,
+
+    -- Location fields for regional analytics.
+    city VARCHAR(100),
+    state VARCHAR(100),
+
+    -- Created timestamp.
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_branches PRIMARY KEY (branch_id)
+);
+
+-- ============================================================
+
 -- Table: public.customers
--- Purpose: Stores individuals who are customers of the bank.
--- Used when questions are about people, users, customer identity, or ownership.
+-- Purpose: Stores customer identity and onboarding information.
+-- Used when questions are about people, customers, tenure, or segmentation.
 
 CREATE TABLE public.customers (
     customer_id BIGSERIAL NOT NULL,
 
-    -- Human-readable full name of the customer.
-    -- Use when output requires identifying the person.
+    -- Full name of customer.
     full_name VARCHAR(150) NOT NULL,
 
-    -- Contact email address.
-    -- Informational only; should not be used for analytics.
+    -- Customer unique ID used internally (CIF).
+    cif_number VARCHAR(30) NOT NULL UNIQUE,
+
+    -- Contact details.
+    mobile VARCHAR(20),
     email VARCHAR(200),
 
-    -- Timestamp when the customer joined the bank.
-    -- Used for tenure or longevity-based questions.
+    -- Customer lifecycle status.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+
+    -- Onboarding date/time.
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT pk_customers PRIMARY KEY (customer_id)
 );
 
+-- ============================================================
+
 -- Table: public.accounts
 -- Purpose: Represents bank accounts owned by customers.
--- Used when questions involve balances, account status, or account ownership.
+-- Used when questions involve balances, account type segmentation, status, ownership.
 
 CREATE TABLE public.accounts (
     account_id BIGSERIAL NOT NULL,
 
-    -- Identifies the owner of the account.
-    -- Used to associate accounts with a customer.
+    -- Unique account number.
+    account_number VARCHAR(30) NOT NULL UNIQUE,
+
+    -- Owner customer.
     customer_id BIGINT NOT NULL,
 
-    -- Category of the account (Savings, Current).
-    -- Used for segmentation and eligibility logic.
+    -- Branch in which account is maintained.
+    branch_id BIGINT NOT NULL,
+
+    -- Category: Savings, Current.
     account_type VARCHAR(50) NOT NULL,
 
-    -- Current available balance in the account.
-    -- Represents present state only; do not use for historical analysis.
-    balance NUMERIC(18,2) NOT NULL,
+    -- Current available balance.
+    balance NUMERIC(18,2) NOT NULL DEFAULT 0,
 
-    -- Lifecycle state of the account (Active, Dormant, Closed).
-    -- Used to filter usable or valid accounts.
-    status VARCHAR(30) NOT NULL,
+    -- Active/Dormant/Closed.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
 
-    -- Date when the account was opened.
-    -- Used for account age or longevity analysis.
+    -- Account opening date.
     opened_date DATE NOT NULL,
 
     CONSTRAINT pk_accounts PRIMARY KEY (account_id),
@@ -149,88 +185,159 @@ CREATE TABLE public.accounts (
     CONSTRAINT fk_accounts_customer
         FOREIGN KEY (customer_id)
         REFERENCES public.customers (customer_id)
+        ON DELETE NO ACTION,
+
+    CONSTRAINT fk_accounts_branch
+        FOREIGN KEY (branch_id)
+        REFERENCES public.branches (branch_id)
         ON DELETE NO ACTION
 );
 
+CREATE INDEX idx_accounts_customer ON public.accounts(customer_id);
+CREATE INDEX idx_accounts_branch ON public.accounts(branch_id);
+
+-- ============================================================
+
 -- Table: public.transactions
--- Purpose: Stores all monetary inflow and outflow activity.
--- Used for spending analysis, income tracking, and transaction history.
+-- Purpose: Stores all money movement for accounts.
+-- Used when questions are about statements, transfers, transaction KPIs, debit/credit.
 
 CREATE TABLE public.transactions (
     transaction_id BIGSERIAL NOT NULL,
 
-    -- Account on which the transaction occurred.
-    -- Used to associate financial activity with customers.
+    -- Unique transaction reference number.
+    txn_reference VARCHAR(50) NOT NULL UNIQUE,
+
+    -- Account in which transaction happened.
     account_id BIGINT NOT NULL,
 
-    -- Date and time when the transaction occurred.
-    -- Primary column for time-based queries (recent, monthly, yearly).
-    transaction_date TIMESTAMP NOT NULL,
+    -- Transaction type: Deposit, Withdrawal, Transfer.
+    txn_type VARCHAR(30) NOT NULL,
 
-    -- Monetary value of the transaction.
-    -- Negative value indicates money leaving the account.
-    -- Positive value indicates money entering the account.
-    amount NUMERIC(18,2) NOT NULL,
+    -- Direction: Credit adds money, Debit removes money.
+    direction VARCHAR(10) NOT NULL CHECK (direction IN ('Credit','Debit')),
 
-    -- Business classification of the transaction.
-    -- Debit = spending, Credit = income.
-    transaction_type VARCHAR(20) NOT NULL,
+    -- Transaction amount.
+    amount NUMERIC(18,2) NOT NULL CHECK (amount >= 0),
 
-    -- Merchant or source associated with the transaction.
-    -- Used for merchant-wise spending analysis.
-    merchant_name VARCHAR(150),
+    -- Status: Success/Failed/Pending.
+    status VARCHAR(30) NOT NULL DEFAULT 'Success',
 
-    -- Execution result of the transaction (Success, Failed, Pending).
-    -- Used for reliability, error detection, and risk monitoring.
-    transaction_status VARCHAR(30) NOT NULL,
+    -- Channel: ATM, Branch, UPI, NEFT, RTGS, IMPS.
+    channel VARCHAR(50),
+
+    -- Note/remark.
+    narration VARCHAR(250),
+
+    -- Timestamp of transaction.
+    transaction_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT pk_transactions PRIMARY KEY (transaction_id),
 
     CONSTRAINT fk_transactions_account
         FOREIGN KEY (account_id)
         REFERENCES public.accounts (account_id)
-        ON DELETE NO ACTION
+        ON DELETE CASCADE
 );
 
--- Table: public.transfers
--- Purpose: Records internal fund movements between accounts.
--- Used when money moves inside the bank rather than via merchants.
+CREATE INDEX idx_txn_time ON public.transactions(transaction_time);
+CREATE INDEX idx_txn_account ON public.transactions(account_id);
 
-CREATE TABLE public.transfers (
-    transfer_id BIGSERIAL NOT NULL,
+-- ============================================================
 
-    -- Source account from which money was sent.
-    -- Represents outflow of funds.
-    from_account_id BIGINT NOT NULL,
+-- Table: public.loan_accounts
+-- Purpose: Stores loans issued to customers.
+-- Used when questions are about loan book, loan status, loan outstanding.
 
-    -- Destination account that received money.
-    -- Represents inflow of funds.
-    to_account_id BIGINT NOT NULL,
+CREATE TABLE public.loan_accounts (
+    loan_id BIGSERIAL NOT NULL,
 
-    -- Amount of money transferred between accounts.
-    -- Always a positive value.
-    transfer_amount NUMERIC(18,2) NOT NULL,
+    -- Loan belongs to this customer.
+    customer_id BIGINT NOT NULL,
 
-    -- Date and time when the transfer occurred.
-    -- Used for time-based transfer analysis.
-    transfer_date TIMESTAMP NOT NULL,
+    -- Loan maintained in branch.
+    branch_id BIGINT NOT NULL,
 
-    -- Current state of the transfer (Completed, Pending, Failed).
-    -- Used for operational monitoring.
-    transfer_status VARCHAR(30) NOT NULL,
+    -- Loan account number.
+    loan_account_number VARCHAR(30) NOT NULL UNIQUE,
 
-    CONSTRAINT pk_transfers PRIMARY KEY (transfer_id),
+    -- Type: Home Loan / Personal Loan / Vehicle Loan.
+    loan_type VARCHAR(50) NOT NULL,
 
-    CONSTRAINT fk_transfers_from_account
-        FOREIGN KEY (from_account_id)
-        REFERENCES public.accounts (account_id)
+    -- Loan sanctioned amount.
+    principal_amount NUMERIC(18,2) NOT NULL,
+
+    -- Interest rate (annual %).
+    annual_interest_rate NUMERIC(5,2) NOT NULL,
+
+    -- Tenure in months.
+    tenure_months INT NOT NULL,
+
+    -- Current outstanding balance.
+    outstanding_amount NUMERIC(18,2) NOT NULL,
+
+    -- Active/Closed/Defaulted.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+
+    -- Disbursement date.
+    disbursed_date DATE NOT NULL,
+
+    CONSTRAINT pk_loan_accounts PRIMARY KEY (loan_id),
+
+    CONSTRAINT fk_loan_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES public.customers (customer_id)
         ON DELETE NO ACTION,
 
-    CONSTRAINT fk_transfers_to_account
-        FOREIGN KEY (to_account_id)
-        REFERENCES public.accounts (account_id)
+    CONSTRAINT fk_loan_branch
+        FOREIGN KEY (branch_id)
+        REFERENCES public.branches (branch_id)
         ON DELETE NO ACTION
 );
+
+CREATE INDEX idx_loans_customer ON public.loan_accounts(customer_id);
+CREATE INDEX idx_loans_branch ON public.loan_accounts(branch_id);
+
+-- ============================================================
+
+-- Table: public.loan_repayments
+-- Purpose: Tracks EMI repayments for each loan.
+-- Used when questions are about overdue EMI, monthly EMI collections, repayment trends.
+
+CREATE TABLE public.loan_repayments (
+    repayment_id BIGSERIAL NOT NULL,
+
+    -- Loan reference.
+    loan_id BIGINT NOT NULL,
+
+    -- EMI due date.
+    due_date DATE NOT NULL,
+
+    -- EMI amount expected.
+    emi_amount NUMERIC(18,2) NOT NULL,
+
+    -- Amount paid.
+    paid_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+
+    -- Paid / Overdue / Pending.
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+
+    -- Payment date (if paid).
+    paid_date DATE,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_loan_repayments PRIMARY KEY (repayment_id),
+
+    CONSTRAINT fk_lr_loan
+        FOREIGN KEY (loan_id)
+        REFERENCES public.loan_accounts (loan_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_lr_due_date ON public.loan_repayments(due_date);
+CREATE INDEX idx_lr_status ON public.loan_repayments(status);
+
 
 """
         return self._schema
