@@ -1,0 +1,310 @@
+-- ============================================================
+-- MINIMAL BANKING DATABASE SCHEMA (6 Tables)
+-- Best for: Chatbot + ORM Dashboard + KPI analytics
+-- PostgreSQL Schema: public
+-- ============================================================
+
+-- Table: public.branches
+-- Purpose: Stores branch master data.
+-- Used when questions are about branch performance, customer distribution, or branch KPIs.
+
+CREATE TABLE public.branches (
+    branch_id BIGSERIAL NOT NULL,
+
+    -- Unique short branch code.
+    branch_code VARCHAR(20) NOT NULL UNIQUE,
+
+    -- Name of the branch.
+    branch_name VARCHAR(150) NOT NULL,
+
+    -- Location fields for regional analytics.
+    city VARCHAR(100),
+    state VARCHAR(100),
+
+    -- Created timestamp.
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_branches PRIMARY KEY (branch_id)
+);
+
+-- ============================================================
+
+-- Table: public.customers
+-- Purpose: Stores customer identity and onboarding information.
+-- Used when questions are about people, customers, tenure, or segmentation.
+
+CREATE TABLE public.customers (
+    customer_id BIGSERIAL NOT NULL,
+
+    -- Full name of customer.
+    full_name VARCHAR(150) NOT NULL,
+
+    -- Customer unique ID used internally (CIF).
+    cif_number VARCHAR(30) NOT NULL UNIQUE,
+
+    -- Contact details.
+    mobile VARCHAR(20),
+    email VARCHAR(200),
+
+    -- Customer lifecycle status.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+
+    -- Onboarding date/time.
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_customers PRIMARY KEY (customer_id)
+);
+
+-- ============================================================
+
+-- Table: public.accounts
+-- Purpose: Represents bank accounts owned by customers.
+-- Used when questions involve balances, account type segmentation, status, ownership.
+
+CREATE TABLE public.accounts (
+    account_id BIGSERIAL NOT NULL,
+
+    -- Unique account number.
+    account_number VARCHAR(30) NOT NULL UNIQUE,
+
+    -- Owner customer.
+    customer_id BIGINT NOT NULL,
+
+    -- Branch in which account is maintained.
+    branch_id BIGINT NOT NULL,
+
+    -- Category: Savings, Current.
+    account_type VARCHAR(50) NOT NULL,
+
+    -- Current available balance.
+    balance NUMERIC(18,2) NOT NULL DEFAULT 0,
+
+    -- Active/Dormant/Closed.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+
+    -- Account opening date.
+    opened_date DATE NOT NULL,
+
+    CONSTRAINT pk_accounts PRIMARY KEY (account_id),
+
+    CONSTRAINT fk_accounts_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES public.customers (customer_id)
+        ON DELETE NO ACTION,
+
+    CONSTRAINT fk_accounts_branch
+        FOREIGN KEY (branch_id)
+        REFERENCES public.branches (branch_id)
+        ON DELETE NO ACTION
+);
+
+CREATE INDEX idx_accounts_customer ON public.accounts(customer_id);
+CREATE INDEX idx_accounts_branch ON public.accounts(branch_id);
+
+-- ============================================================
+
+-- Table: public.transactions
+-- Purpose: Stores all money movement for accounts.
+-- Used when questions are about statements, transfers, transaction KPIs, debit/credit.
+
+CREATE TABLE public.transactions (
+    transaction_id BIGSERIAL NOT NULL,
+
+    -- Unique transaction reference number.
+    txn_reference VARCHAR(50) NOT NULL UNIQUE,
+
+    -- Account in which transaction happened.
+    account_id BIGINT NOT NULL,
+
+    -- Transaction type: Deposit, Withdrawal, Transfer.
+    txn_type VARCHAR(30) NOT NULL,
+
+    -- Direction: Credit adds money, Debit removes money.
+    direction VARCHAR(10) NOT NULL CHECK (direction IN ('Credit','Debit')),
+
+    -- Transaction amount.
+    amount NUMERIC(18,2) NOT NULL CHECK (amount >= 0),
+
+    -- Status: Success/Failed/Pending.
+    status VARCHAR(30) NOT NULL DEFAULT 'Success',
+
+    -- Channel: ATM, Branch, UPI, NEFT, RTGS, IMPS.
+    channel VARCHAR(50),
+
+    -- Note/remark.
+    narration VARCHAR(250),
+
+    -- Timestamp of transaction.
+    transaction_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_transactions PRIMARY KEY (transaction_id),
+
+    CONSTRAINT fk_transactions_account
+        FOREIGN KEY (account_id)
+        REFERENCES public.accounts (account_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_txn_time ON public.transactions(transaction_time);
+CREATE INDEX idx_txn_account ON public.transactions(account_id);
+
+-- ============================================================
+
+-- Table: public.loan_accounts
+-- Purpose: Stores loans issued to customers.
+-- Used when questions are about loan book, loan status, loan outstanding.
+
+CREATE TABLE public.loan_accounts (
+    loan_id BIGSERIAL NOT NULL,
+
+    -- Loan belongs to this customer.
+    customer_id BIGINT NOT NULL,
+
+    -- Loan maintained in branch.
+    branch_id BIGINT NOT NULL,
+
+    -- Loan account number.
+    loan_account_number VARCHAR(30) NOT NULL UNIQUE,
+
+    -- Type: Home Loan / Personal Loan / Vehicle Loan.
+    loan_type VARCHAR(50) NOT NULL,
+
+    -- Loan sanctioned amount.
+    principal_amount NUMERIC(18,2) NOT NULL,
+
+    -- Interest rate (annual %).
+    annual_interest_rate NUMERIC(5,2) NOT NULL,
+
+    -- Tenure in months.
+    tenure_months INT NOT NULL,
+
+    -- Current outstanding balance.
+    outstanding_amount NUMERIC(18,2) NOT NULL,
+
+    -- Active/Closed/Defaulted.
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+
+    -- Disbursement date.
+    disbursed_date DATE NOT NULL,
+
+    CONSTRAINT pk_loan_accounts PRIMARY KEY (loan_id),
+
+    CONSTRAINT fk_loan_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES public.customers (customer_id)
+        ON DELETE NO ACTION,
+
+    CONSTRAINT fk_loan_branch
+        FOREIGN KEY (branch_id)
+        REFERENCES public.branches (branch_id)
+        ON DELETE NO ACTION
+);
+
+CREATE INDEX idx_loans_customer ON public.loan_accounts(customer_id);
+CREATE INDEX idx_loans_branch ON public.loan_accounts(branch_id);
+
+-- ============================================================
+
+-- Table: public.loan_repayments
+-- Purpose: Tracks EMI repayments for each loan.
+-- Used when questions are about overdue EMI, monthly EMI collections, repayment trends.
+
+CREATE TABLE public.loan_repayments (
+    repayment_id BIGSERIAL NOT NULL,
+
+    -- Loan reference.
+    loan_id BIGINT NOT NULL,
+
+    -- EMI due date.
+    due_date DATE NOT NULL,
+
+    -- EMI amount expected.
+    emi_amount NUMERIC(18,2) NOT NULL,
+
+    -- Amount paid.
+    paid_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+
+    -- Paid / Overdue / Pending.
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+
+    -- Payment date (if paid).
+    paid_date DATE,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_loan_repayments PRIMARY KEY (repayment_id),
+
+    CONSTRAINT fk_lr_loan
+        FOREIGN KEY (loan_id)
+        REFERENCES public.loan_accounts (loan_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_lr_due_date ON public.loan_repayments(due_date);
+CREATE INDEX idx_lr_status ON public.loan_repayments(status);
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+data ingestion
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- ---------------------------
+-- 1) Insert Branches
+-- ---------------------------
+INSERT INTO public.branches (branch_code, branch_name, city, state)
+VALUES
+('BR001','Chennai Main Branch','Chennai','Tamil Nadu'),
+('BR002','Bangalore Branch','Bangalore','Karnataka'),
+('BR003','Hyderabad Branch','Hyderabad','Telangana');
+
+-- ---------------------------
+-- 2) Insert Customers
+-- ---------------------------
+INSERT INTO public.customers (full_name, cif_number, mobile, email, status)
+VALUES
+('Arun Kumar','CIF1001','9876543210','arun@email.com','Active'),
+('Meena Sharma','CIF1002','9887766554','meena@email.com','Active'),
+('Rahul Verma','CIF1003','9998877665','rahul@email.com','Active'),
+('Priya Nair','CIF1004','9786655443','priya@email.com','Inactive');
+
+-- ---------------------------
+-- 3) Insert Accounts
+-- ---------------------------
+INSERT INTO public.accounts (account_number, customer_id, branch_id, account_type, balance, status, opened_date)
+VALUES
+('AC001', 1, 1, 'Savings', 50000, 'Active', '2024-01-10'),
+('AC002', 2, 1, 'Current', 120000, 'Active', '2023-09-05'),
+('AC003', 3, 2, 'Savings', 75000, 'Dormant', '2022-06-11'),
+('AC004', 4, 3, 'Savings', 1500, 'Active', '2025-02-20');
+
+-- ---------------------------
+-- 4) Insert Transactions
+-- ---------------------------
+INSERT INTO public.transactions
+(txn_reference, account_id, txn_type, direction, amount, status, channel, narration, transaction_time)
+VALUES
+('TXN001', 1, 'Deposit', 'Credit', 50000, 'Success', 'Branch', 'Initial deposit', '2025-12-01 10:00:00'),
+('TXN002', 1, 'Withdrawal', 'Debit', 2000, 'Success', 'ATM', 'Cash withdrawal', '2025-12-02 18:45:00'),
+('TXN003', 2, 'Transfer', 'Debit', 15000, 'Success', 'NEFT', 'Vendor payment', '2025-12-03 11:20:00'),
+('TXN004', 4, 'Deposit', 'Credit', 1000, 'Failed', 'UPI', 'UPI deposit failed', '2025-12-05 09:10:00');
+
+-- ---------------------------
+-- 5) Insert Loan Accounts
+-- ---------------------------
+INSERT INTO public.loan_accounts
+(customer_id, branch_id, loan_account_number, loan_type, principal_amount, annual_interest_rate,
+ tenure_months, outstanding_amount, status, disbursed_date)
+VALUES
+(1, 1, 'LN001', 'Home Loan', 2500000, 8.50, 240, 2350000, 'Active', '2023-03-15'),
+(2, 1, 'LN002', 'Personal Loan', 500000, 12.00, 60, 410000, 'Active', '2024-05-01'),
+(3, 2, 'LN003', 'Vehicle Loan', 800000, 9.50, 84, 650000, 'Active', '2022-09-20');
+
+-- ---------------------------
+-- 6) Insert Loan Repayments (EMI)
+-- ---------------------------
+INSERT INTO public.loan_repayments
+(loan_id, due_date, emi_amount, paid_amount, status, paid_date)
+VALUES
+(1, '2025-12-05', 25000, 25000, 'Paid', '2025-12-05'),
+(1, '2026-01-05', 25000, 0, 'Pending', NULL),
+(2, '2025-12-10', 12000, 6000, 'Overdue', NULL),
+(3, '2025-12-15', 15000, 15000, 'Paid', '2025-12-14');

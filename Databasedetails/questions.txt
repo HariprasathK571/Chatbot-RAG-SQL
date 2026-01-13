@@ -1,0 +1,173 @@
+I have a certain questions to validate whether our application is giving me a correct answer or not.
+I had tested our application with the below question, and our application passed all the testcases which i had created to test our application.
+----------------------------------------------------
+1️. Question:
+
+How many customers are currently active in the bank?
+
+Expected Answer:
+
+3 customers
+
+Reasoning (hidden from user):
+Arun Kumar, Meena Sharma, Rahul Verma are active
+Priya Nair is inactive
+
+----------------------------------------------------
+2️.Question:
+
+What is the total money currently held in savings and current accounts?
+
+Expected Answer:
+
+₹2,46,500
+
+Breakdown:
+
+Account 1: ₹50,000
+
+Account 2: ₹1,20,000
+
+Account 3: ₹75,000
+
+Account 4: ₹1,500
+Total = ₹246,500
+-----------------------------------------------------
+3️.Question:
+
+Which branch holds the highest total customer deposits?
+
+Expected Answer:
+
+Chennai Main Branch
+
+Why:
+Chennai branch has 2 accounts totaling ₹1,70,000
+Other branches have less
+--------------------------------------------------------
+4️.Question:
+
+Show the recent money movements for Arun Kumar.
+
+Expected Answer:
+
+Initial deposit of ₹50,000
+
+Cash withdrawal of ₹2,000
+
+Both transactions were successful.
+--------------------------------------------------------
+5️.Question:
+
+Are there any accounts that are not actively being used?
+
+Expected Answer:
+
+Yes — 1 account is inactive/dormant
+
+Owned by Rahul Verma
+--------------------------------------------------------
+6️.Question:
+
+How many loans are currently active?
+
+Expected Answer:
+
+3 active loans
+
+(All loans in sample data are active)
+-----------------------------------------------------------
+7️.Question:
+
+Which customer has the largest outstanding loan amount?
+
+Expected Answer:
+
+Arun Kumar
+
+Outstanding amount: ₹23,50,000
+------------------------------------------------------------
+8️.Question:
+
+Are there any missed or partially paid loan installments?
+
+Expected Answer:
+
+Yes
+
+One upcoming installment is pending
+
+One installment is partially paid and overdue
+------------------------------------------------------------
+9️.Question:
+
+Which loan type contributes the highest value to the loan book?
+
+Expected Answer:
+
+Home Loans
+
+Because the home loan amount is significantly higher than other loan types.
+---------------------------------------------------------------
+10.Question:
+
+How much money was successfully credited into customer accounts?
+
+Expected Answer:
+
+₹50,000
+
+Only one successful credit transaction exists in the data.
+--------------------------------------------------------------------
+1️1.Question:
+
+How many payment attempts failed in the system?
+
+Expected Answer:
+
+1 transaction
+----------------------------------------------------------------------
+1️2️.Question:
+
+Which branch has issued the maximum number of loans?
+
+Expected Answer:
+
+Chennai Main Branch
+
+Issued 2 out of 3 loans.
+---------------------------------------------------------------------
+1️3️.Question:
+
+What is the total amount collected from loan repayments so far?
+
+Expected Answer:
+
+₹46,000
+
+Calculation:
+
+25,000 (Paid)
+
+6,000 (Partial)
+
+15,000 (Paid)
+----------------------------------------------------------------------
+1️4️.Question:
+
+Are there customers who have both a bank account and a loan?
+
+Expected Answer:
+
+Yes — all loan customers also have bank accounts
+------------------------------------------------------------------------
+1️5️.Question:
+
+Which month has the highest loan repayment collection?
+
+Expected Answer:
+
+December 2025
+
+Most EMI payments occurred during this period.
+============================================================================================================================================================================================
