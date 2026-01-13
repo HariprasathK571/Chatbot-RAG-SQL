@@ -6,6 +6,9 @@ import json
 from .service import MSSQLConnector
 from src.db.core import get_session
 from src.chatbot.schema import ChatbotuserQuery
+from src.auth.models import User  # noqa: F401
+from src.auth.deps import get_current_user
+
 
 conn = MSSQLConnector()
 
@@ -18,7 +21,7 @@ llm= ChatOpenAI(
         )
 
 @chatbot_router.post("/query_stream")
-async def run_query_stream(req: ChatbotuserQuery,session: AsyncSession = Depends(get_session)):
+async def run_query_stream(req: ChatbotuserQuery,session: AsyncSession = Depends(get_session),user: User = Depends(get_current_user) ):
 
     if not req.question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
