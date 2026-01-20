@@ -497,5 +497,29 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
         except Exception:
             yield "Sorry, something went wrong while processing your request. Please try again later."
 
+async def rewrite_question_with_history(
+    llm: ChatOpenAI,
+    current_question: str,
+    history: list[dict],
+) -> str:
+    history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system",
+         "Rewrite the user's current question into a fully standalone question.\n"
+         "Rules:\n"
+         "- Use chat history only when needed\n"
+         "- Output ONLY rewritten question\n"
+         "- No explanation\n"),
+        ("user",
+         "Conversation history:\n{history}\n\n"
+         "Current question:\n{question}\n\n"
+         "Standalone question:")
+    ])
+
+    msgs = prompt.format_messages(history=history_text, question=current_question)
+    resp = await llm.ainvoke(msgs)
+    rewritten = (resp.content or "").strip()
+    return rewritten if rewritten else current_question
 
 

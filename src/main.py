@@ -3,6 +3,7 @@ from src.chatbot.routes import chatbot_router
 from fastapi.middleware.cors import CORSMiddleware
 from src.auth.routes import auth_router
 from src.db.core import init_db  # ✅ this will load User model also
+from src.conversations.routes import router as conversation_router
 
 app = FastAPI(title="SQL LLM API")
 
@@ -21,4 +22,5 @@ app.add_middleware(
 version_prefix =f"/api"
 
 app.include_router(auth_router, prefix=f"{version_prefix}/auth", tags=["auth"])
+app.include_router(conversation_router, prefix=f"{version_prefix}/conversations", tags=["conversations"])
 app.include_router(chatbot_router, prefix=f"{version_prefix}/chatbot", tags=["chatbot"])
