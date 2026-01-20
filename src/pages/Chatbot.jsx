@@ -221,6 +221,53 @@ export default function Chatbot() {
       setStreaming(false);
     }
   };
+  
+  const deleteConversation = async (conversationId) => {
+  try {
+    setError("");
+
+    const res = await authFetch(
+      `${API_BASE_URL}/api/conversations/${conversationId}`,
+      { method: "DELETE" },
+      logout
+    );
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.detail || `Delete failed: ${res.status}`);
+    }
+
+    // ✅ remove from sidebar list
+    setConversations((prev) =>
+      prev.filter((c) => c.conversation_id !== conversationId)
+    );
+
+    // ✅ if deleted tab was active, open next tab
+    if (activeConversationId === conversationId) {
+      const remaining = conversations.filter(
+        (c) => c.conversation_id !== conversationId
+      );
+
+      if (remaining.length > 0) {
+        const nextId = remaining[0].conversation_id;
+        setActiveConversationId(nextId);
+
+        const msgs = await fetchMessages(nextId);
+        setMessages(msgs.map((m) => ({ role: m.role, content: m.content })));
+      } else {
+        // if none left -> create new conversation
+        const newConvo = await createConversation();
+        setActiveConversationId(newConvo.conversation_id);
+        setMessages([]);
+
+        const convos = await fetchConversations();
+        setConversations(convos);
+      }
+    }
+  } catch (e) {
+    setError(e.message);
+  }
+};
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -252,19 +299,37 @@ export default function Chatbot() {
 
         {/* Conversation Tabs */}
         <div className="tabsList">
-          {conversations.map((c) => (
-            <div
-              key={c.conversation_id}
-              className={`tabItem ${
-                activeConversationId === c.conversation_id ? "activeTab" : ""
-              }`}
-              onClick={() => handleSelectConversation(c.conversation_id)}
-              title={c.title}
-            >
-              {c.title || "New Chat"}
-            </div>
-          ))}
-        </div>
+  {conversations.map((c) => (
+    <div
+      key={c.conversation_id}
+      className={`tabItem ${
+        activeConversationId === c.conversation_id ? "activeTab" : ""
+      }`}
+      title={c.title}
+      onClick={() => handleSelectConversation(c.conversation_id)}
+    >
+      <div className="tabItemRow">
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          {c.title || "New Chat"}
+        </span>
+
+        {/* ✅ delete button */}
+        <button
+          className="tabDeleteBtn"
+          title="Delete chat"
+          onClick={(e) => {
+            e.stopPropagation(); // ✅ prevent switching tab on delete
+            const ok = window.confirm("Delete this conversation?");
+            if (ok) deleteConversation(c.conversation_id);
+          }}
+        >
+          🗑
+        </button>
+      </div>
+    </div>
+  ))}
+</div>
+
 
         <button className="btnDanger" onClick={logout}>
           Logout
