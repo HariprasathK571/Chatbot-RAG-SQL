@@ -39,21 +39,23 @@ async def run_query_stream(
     convo = await ConversationService.get_conversation(session, req.conversation_id, current_user.user_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # ✅ last 5Q+5A
+    history_window = await ConversationService.fetch_history_window(session, req.conversation_id)
+
+    # ✅ rewrite question
+    rewritten_question = await rewrite_question_with_history(llm, question, history_window)
+
+    print(rewritten_question)
 
     # ✅ store user msg
-    await ConversationService.add_message(session, req.conversation_id, "user", question)
+    await ConversationService.add_message(session, req.conversation_id, "user", rewritten_question)
 
     # ✅ title generation on first msg
     msgs = await ConversationService.get_messages(session, req.conversation_id)
     if len(msgs) == 1 and (convo.title is None or convo.title.strip() == "New Chat"):
         title = await ConversationTitleGenerator.generate_title(question, llm)
         await ConversationService.update_conversation_title(session, convo, title)
-
-    # ✅ last 5Q+5A
-    history_window = await ConversationService.fetch_history_window(session, req.conversation_id)
-
-    # ✅ rewrite question
-    rewritten_question = await rewrite_question_with_history(llm, question, history_window)
 
     async def stream_response():
         assistant_answer = ""
