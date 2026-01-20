@@ -1,11 +1,5 @@
 import { getAccessToken, refreshAccessToken, clearTokens } from "./authService";
 
-/**
- * ✅ authFetch:
- * - sends access token
- * - if 401 -> refresh -> retry
- * - if refresh fails -> logout by clearing tokens
- */
 export async function authFetch(url, options = {}, onLogout) {
   let accessToken = getAccessToken();
 
@@ -23,21 +17,21 @@ export async function authFetch(url, options = {}, onLogout) {
     });
   };
 
-  // 1️⃣ attempt with current access token
+  // 1️⃣ try with current access token
   let res = await doFetch(accessToken);
 
-  // 2️⃣ if access token expired -> refresh and retry
+  // 2️⃣ if 401 -> refresh -> retry
   if (res.status === 401) {
     const newToken = await refreshAccessToken();
 
-    // refresh token expired -> logout
+    // refresh failed => logout
     if (!newToken) {
       clearTokens();
       if (onLogout) onLogout();
-      return res; // return old 401 response
+      return res;
     }
 
-    // retry request with new access token
+    // retry with new access token
     res = await doFetch(newToken);
   }
 

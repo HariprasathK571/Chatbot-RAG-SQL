@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export default function Register() {
   const nav = useNavigate();
-
   const REGISTER_URL = useMemo(() => `${API_BASE_URL}/api/auth/register`, []);
 
   const [fullName, setFullName] = useState("");
@@ -35,16 +35,16 @@ export default function Register() {
         body: JSON.stringify({
           full_name: fullName.trim(),
           email: email.trim(),
-          password: password,
+          password,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data?.detail || "Registration failed");
+        throw new Error(data?.detail || "Register failed");
       }
 
-      setSuccess("✅ Registration successful. Redirecting to login...");
+      setSuccess("Registration successful. Redirecting to login...");
       setTimeout(() => nav("/login"), 1200);
     } catch (e) {
       setErr(e.message);
@@ -60,7 +60,7 @@ export default function Register() {
           <div className="logo">DS</div>
           <div>
             <h1>Create Account</h1>
-            <p className="muted">Register to use DataSage</p>
+            <p className="muted">Register to access DataSage</p>
           </div>
         </div>
 
@@ -71,7 +71,6 @@ export default function Register() {
             onChange={(e) => setFullName(e.target.value)}
             placeholder="Your name"
             type="text"
-            autoComplete="name"
           />
 
           <label>Email</label>
@@ -80,7 +79,6 @@ export default function Register() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="example@email.com"
             type="email"
-            autoComplete="email"
           />
 
           <label>Password</label>
@@ -89,7 +87,6 @@ export default function Register() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
             type="password"
-            autoComplete="new-password"
           />
 
           {err && <div className="errorBox">{err}</div>}
@@ -100,13 +97,8 @@ export default function Register() {
           </button>
 
           <p className="muted small" style={{ textAlign: "center" }}>
-            Already have an account?{" "}
-            <span
-              className="linkBtn"
-              onClick={() => nav("/login")}
-              role="button"
-              tabIndex={0}
-            >
+            Already have account?{" "}
+            <span className="linkBtn" onClick={() => nav("/login")}>
               Login
             </span>
           </p>

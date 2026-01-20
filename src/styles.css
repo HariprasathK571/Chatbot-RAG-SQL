@@ -343,3 +343,35 @@ textarea:focus {
   cursor: pointer;
   font-weight: 700;
 }
+
+.tabsList {
+  margin-top: 12px;
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+}
+
+.tabItem {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabItem:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.activeTab {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: rgba(37, 99, 235, 0.18);
+}
+
+

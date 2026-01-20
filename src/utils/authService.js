@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export function getAccessToken() {
   return localStorage.getItem("access_token");
@@ -19,9 +20,6 @@ export function clearTokens() {
   localStorage.removeItem("userEmail");
 }
 
-/**
- * ✅ Calls /refresh and returns new access token or null
- */
 export async function refreshAccessToken() {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
@@ -35,11 +33,9 @@ export async function refreshAccessToken() {
   if (!res.ok) return null;
 
   const data = await res.json();
-
   if (data?.access_token && data?.refresh_token) {
     setTokens(data.access_token, data.refresh_token);
     return data.access_token;
   }
-
   return null;
 }

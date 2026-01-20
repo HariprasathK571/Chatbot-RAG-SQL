@@ -1,40 +1,102 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-
 import { authFetch } from "../utils/authFetch";
 import { clearTokens } from "../utils/authService";
 
-// ✅ API Base URL from env
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-
-const API_URL = `${API_BASE_URL}/api/chatbot/query_stream`;
 
 export default function Chatbot() {
   const nav = useNavigate();
 
-  const [question, setQuestion] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+
   const [messages, setMessages] = useState([]);
+  const [question, setQuestion] = useState("");
+
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
 
-  // ✅ auto-scroll logic
+  // scroll behavior
   const chatWindowRef = useRef(null);
   const bottomRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const userEmail = useMemo(() => localStorage.getItem("userEmail"), []);
 
-  // ✅ detect if user scrolled away from bottom
+  const logout = () => {
+    clearTokens();
+    nav("/login");
+  };
+
+  // ---------- API calls ----------
+  const fetchConversations = async () => {
+    const res = await authFetch(
+      `${API_BASE_URL}/api/conversations`,
+      { method: "GET" },
+      logout
+    );
+    if (!res.ok) throw new Error(`Failed to load conversations: ${res.status}`);
+    return res.json();
+  };
+
+  const fetchMessages = async (conversationId) => {
+    const res = await authFetch(
+      `${API_BASE_URL}/api/conversations/${conversationId}/messages`,
+      { method: "GET" },
+      logout
+    );
+    if (!res.ok) throw new Error(`Failed to load messages: ${res.status}`);
+    return res.json();
+  };
+
+  const createConversation = async () => {
+    const res = await authFetch(
+      `${API_BASE_URL}/api/conversations`,
+      { method: "POST" },
+      logout
+    );
+    if (!res.ok) throw new Error(`Failed to create conversation: ${res.status}`);
+    return res.json(); // {conversation_id, title}
+  };
+
+  // ---------- INIT ----------
+  useEffect(() => {
+    (async () => {
+      try {
+        const convos = await fetchConversations();
+        setConversations(convos);
+
+        if (convos.length > 0) {
+          const id = convos[0].conversation_id;
+          setActiveConversationId(id);
+          const msgs = await fetchMessages(id);
+          setMessages(msgs.map((m) => ({ role: m.role, content: m.content })));
+        } else {
+          // if none exist => create new conversation
+          const newConvo = await createConversation();
+          setActiveConversationId(newConvo.conversation_id);
+          setMessages([]);
+          const convos2 = await fetchConversations();
+          setConversations(convos2);
+        }
+      } catch (e) {
+        setError(e.message);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------- SCROLL ----------
   useEffect(() => {
     const el = chatWindowRef.current;
     if (!el) return;
 
     const handleScroll = () => {
-      const threshold = 120; // px from bottom
+      const threshold = 120;
       const atBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-
       setAutoScroll(atBottom);
     };
 
@@ -42,25 +104,38 @@ export default function Chatbot() {
     return () => el.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // ✅ scroll ONLY if autoScroll enabled
   useEffect(() => {
     if (!autoScroll) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, autoScroll]);
 
-  // ✅ logout helper (only called when refresh also fails)
-  const logout = () => {
-    clearTokens();
-    nav("/login");
+  // ---------- UI handlers ----------
+  const handleSelectConversation = async (conversationId) => {
+    try {
+      setError("");
+      setActiveConversationId(conversationId);
+      const msgs = await fetchMessages(conversationId);
+      setMessages(msgs.map((m) => ({ role: m.role, content: m.content })));
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
-  const clearChat = () => {
-    setMessages([]);
-    setError("");
-    setQuestion("");
+  const handleNewChat = async () => {
+    try {
+      setError("");
+      const newConvo = await createConversation();
+      setActiveConversationId(newConvo.conversation_id);
+      setMessages([]);
+
+      const convos = await fetchConversations();
+      setConversations(convos);
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
-  const runQueryStream = async () => {
+  const sendMessage = async () => {
     setError("");
 
     const q = question.trim();
@@ -68,55 +143,42 @@ export default function Chatbot() {
       setError("Please enter a question");
       return;
     }
+    if (!activeConversationId) {
+      setError("No active conversation. Click New Chat.");
+      return;
+    }
 
-    // ✅ Add user msg
-    const userMsg = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: q,
-    };
-
-    // ✅ assistant placeholder
-    const botMsgId = crypto.randomUUID();
-    const botMsg = {
-      id: botMsgId,
-      role: "assistant",
-      content: "",
-      mode: "sql",
-    };
-
-    setAutoScroll(true);
-    setMessages((prev) => [...prev, userMsg, botMsg]);
     setQuestion("");
+    setAutoScroll(true);
     setStreaming(true);
 
+    // add user msg
+    setMessages((prev) => [...prev, { role: "user", content: q }]);
+
+    // assistant placeholder
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
     try {
-      // ✅ IMPORTANT CHANGE: use authFetch instead of normal fetch
-      // This automatically refreshes access token if expired
       const res = await authFetch(
-        API_URL,
+        `${API_BASE_URL}/api/chatbot/query_stream`,
         {
           method: "POST",
-          body: JSON.stringify({ question: q }),
+          body: JSON.stringify({
+            conversation_id: activeConversationId,
+            question: q,
+          }),
         },
-        () => {
-          // ✅ only runs if BOTH tokens expired
-          logout();
-        }
+        logout
       );
 
-      if (!res.ok) {
-        throw new Error(`API error: ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      if (!res.body) throw new Error("No stream body received");
 
-      if (!res.body) {
-        throw new Error("No response body (stream not supported?)");
-      }
-
-      // ✅ stream reading (same logic as before)
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+
       let buffer = "";
+      let assistantText = "";
 
       while (true) {
         const { value, done } = await reader.read();
@@ -124,38 +186,46 @@ export default function Chatbot() {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // ✅ backend sends JSON per line
-        let lines = buffer.split("\n");
-        buffer = lines.pop(); // keep incomplete line
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
 
         for (const line of lines) {
           if (!line.trim()) continue;
 
           try {
-            const data = JSON.parse(line);
-
+            const data = JSON.parse(line); // {chunk:"..."}
             if (data.chunk) {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === botMsgId
-                    ? { ...m, content: m.content + data.chunk }
-                    : m
-                )
-              );
-            }
+              assistantText += data.chunk;
 
-            if (data.error) {
-              setError(data.error);
+              setMessages((prev) => {
+                const copy = [...prev];
+                copy[copy.length - 1] = {
+                  role: "assistant",
+                  content: assistantText,
+                };
+                return copy;
+              });
             }
           } catch {
-            // ignore invalid json
+            // ignore bad JSON
           }
         }
       }
+
+      // refresh sidebar: title/updated_at may change after first message
+      const convos = await fetchConversations();
+      setConversations(convos);
     } catch (e) {
-      setError("Failed to connect to API: " + e.message);
+      setError("Failed: " + e.message);
     } finally {
       setStreaming(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!streaming) sendMessage();
     }
   };
 
@@ -164,17 +234,9 @@ export default function Chatbot() {
     setAutoScroll(true);
   };
 
-  const handleKeyDown = (e) => {
-    // ✅ Enter = send, Shift+Enter = new line
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!streaming) runQueryStream();
-    }
-  };
-
   return (
     <div className="chatLayout">
-      {/* ✅ Sidebar */}
+      {/* Sidebar */}
       <aside className="sidebar">
         <div className="brandSide">
           <div className="logo">DS</div>
@@ -184,16 +246,24 @@ export default function Chatbot() {
           </div>
         </div>
 
-        <button className="btnSecondary" onClick={clearChat}>
+        <button className="btnSecondary" onClick={handleNewChat}>
           + New Chat
         </button>
 
-        <div className="sideHint">
-          <p className="muted small">
-            Ask anything about your data.
-            <br />
-            SQL will stream live.
-          </p>
+        {/* Conversation Tabs */}
+        <div className="tabsList">
+          {conversations.map((c) => (
+            <div
+              key={c.conversation_id}
+              className={`tabItem ${
+                activeConversationId === c.conversation_id ? "activeTab" : ""
+              }`}
+              onClick={() => handleSelectConversation(c.conversation_id)}
+              title={c.title}
+            >
+              {c.title || "New Chat"}
+            </div>
+          ))}
         </div>
 
         <button className="btnDanger" onClick={logout}>
@@ -201,30 +271,32 @@ export default function Chatbot() {
         </button>
       </aside>
 
-      {/* ✅ Main */}
+      {/* Main */}
       <main className="chatMain">
         <header className="topbar">
           <div>
             <h3>Chatbot</h3>
-            <p className="muted small">Streaming Mode</p>
+            <p className="muted small">
+              {activeConversationId
+                ? `Conversation: ${activeConversationId}`
+                : "No active conversation"}
+            </p>
           </div>
-
           {streaming && <span className="badge">Generating...</span>}
         </header>
 
-        {/* ✅ Chat Window */}
         <section className="chatWindow" ref={chatWindowRef}>
           {messages.length === 0 ? (
             <div className="emptyState">
               <h2>👋 Welcome to DataSage</h2>
               <p className="muted">
-                Type a question like:
+                Ask anything about your data.
                 <br />
-                <b>“Show top 10 customers by loan amount”</b>
+                Example: <b>“Show top 10 customers by loan amount”</b>
               </p>
             </div>
           ) : (
-            messages.map((m) => <MessageBubble key={m.id} msg={m} />)
+            messages.map((m, idx) => <MessageBubble key={idx} msg={m} />)
           )}
 
           {!autoScroll && (
@@ -236,10 +308,8 @@ export default function Chatbot() {
           <div ref={bottomRef} />
         </section>
 
-        {/* ✅ Error */}
         {error && <div className="errorBar">{error}</div>}
 
-        {/* ✅ Input */}
         <footer className="chatInputBar">
           <textarea
             value={question}
@@ -248,11 +318,10 @@ export default function Chatbot() {
             placeholder="Enter your question... (Enter to send, Shift+Enter new line)"
             rows={2}
           />
-
           <button
             className="btnPrimary"
             disabled={streaming}
-            onClick={runQueryStream}
+            onClick={sendMessage}
           >
             {streaming ? "Running..." : "Run Query"}
           </button>
@@ -264,7 +333,6 @@ export default function Chatbot() {
 
 function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
-
   return (
     <div className={`bubbleRow ${isUser ? "right" : "left"}`}>
       <div className={`bubble ${isUser ? "userBubble" : "botBubble"}`}>
