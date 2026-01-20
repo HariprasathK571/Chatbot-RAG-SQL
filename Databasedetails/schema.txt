@@ -308,3 +308,12 @@ VALUES
 (1, '2026-01-05', 25000, 0, 'Pending', NULL),
 (2, '2025-12-10', 12000, 6000, 'Overdue', NULL),
 (3, '2025-12-15', 15000, 15000, 'Paid', '2025-12-14');
+
+
+ALTER TABLE messages DROP CONSTRAINT messages_conversation_id_fkey;
+
+ALTER TABLE messages
+ADD CONSTRAINT messages_conversation_id_fkey
+FOREIGN KEY (conversation_id)
+REFERENCES conversations(conversation_id)
+ON DELETE CASCADE;

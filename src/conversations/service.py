@@ -105,3 +105,13 @@ class ConversationService:
     async def update_conversation_title(session: AsyncSession, convo: Conversation, title: str):
         convo.title = (title or "New Chat")[:200]
         await ConversationService.touch_conversation(session, convo)
+
+    @staticmethod
+    async def delete_conversation(session: AsyncSession, conversation_id, user_id: int) -> bool:
+        convo = await ConversationService.get_conversation(session, conversation_id, user_id)
+        if not convo:
+            return False
+
+        await session.delete(convo)
+        await session.commit()
+        return True

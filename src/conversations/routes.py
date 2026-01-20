@@ -42,3 +42,20 @@ async def get_messages(
 
     msgs = await ConversationService.get_messages(session, conversation_id)
     return [{"role": m.role, "content": m.content, "created_at": m.created_at} for m in msgs]
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    deleted = await ConversationService.delete_conversation(
+        session=session,
+        conversation_id=conversation_id,
+        user_id=current_user.user_id,
+    )
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return {"message": "Conversation deleted successfully", "conversation_id": str(conversation_id)}
