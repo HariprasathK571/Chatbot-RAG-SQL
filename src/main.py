@@ -5,11 +5,19 @@ from src.auth.routes import auth_router
 from src.db.core import init_db  # ✅ this will load User model also
 from src.conversations.routes import router as conversation_router
 
+from src.core.logger import setup_logging
+from src.core.middleware import RequestIdMiddleware
+
+setup_logging()
+
 app = FastAPI(title="SQL LLM API")
 
 @app.on_event("startup")
 async def on_startup():
     await init_db()  
+
+# ✅ request-id middleware
+app.add_middleware(RequestIdMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

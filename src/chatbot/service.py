@@ -1,4 +1,5 @@
 import logging
+import time
 from typing_extensions import TypedDict, Annotated
 from colorama import Fore, Style, init
 from langchain_core.prompts import ChatPromptTemplate
@@ -6,10 +7,11 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy import text, inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
-from src.db.core import async_engine, sync_url# ✅ shared async engine + session
-# import asyncio
-#get_session 
+from src.db.core import async_engine, sync_url
+
 init(autoreset=True)
+
+logger = logging.getLogger(__name__)
 
 
 class QueryOutput(TypedDict):
@@ -27,9 +29,6 @@ class MSSQLConnector:
     # 🧩 SCHEMA EXPORT
     # ----------------------------------------------------------------
     async def export_schema_with_samples(self, sample_limit=2):
-        """
-        Return formatted schema with table definitions and sample rows (async).
-        """
         inspector = inspect(sync_url)
         output = []
 
@@ -40,7 +39,6 @@ class MSSQLConnector:
                 for table_name in inspector.get_table_names(schema=schema):
                     output.append(f"\n-- Table: {schema}.{table_name}")
 
-                    # 1️⃣ Columns
                     columns = inspector.get_columns(table_name, schema=schema)
                     ddl = f"CREATE TABLE {schema}.[{table_name}] (\n"
                     column_defs = []
@@ -51,14 +49,12 @@ class MSSQLConnector:
                             col_def += " NOT NULL"
                         column_defs.append(col_def)
 
-                    # 2️⃣ Primary Key
                     pk_constraint = inspector.get_pk_constraint(table_name, schema=schema)
                     if pk_constraint and pk_constraint.get("constrained_columns"):
                         pk_cols = ", ".join(f"[{col}]" for col in pk_constraint["constrained_columns"])
                         pk_name = pk_constraint.get("name", f"PK_{table_name}")
                         column_defs.append(f"    CONSTRAINT [{pk_name}] PRIMARY KEY CLUSTERED ({pk_cols})")
 
-                    # 3️⃣ Foreign Keys
                     fks = inspector.get_foreign_keys(table_name, schema=schema)
                     for fk in fks:
                         fk_cols = ", ".join(f"[{col}]" for col in fk["constrained_columns"])
@@ -74,7 +70,6 @@ class MSSQLConnector:
                     ddl += ",\n".join(column_defs) + "\n);"
                     output.append(ddl)
 
-                    # 4️⃣ Sample Rows
                     try:
                         result = await conn.execute(text(f"SELECT TOP {sample_limit} * FROM {schema}.[{table_name}]"))
                         rows = result.fetchall()
@@ -380,8 +375,13 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
     # ----------------------------------------------------------------
     # 🧩 QUERY GENERATION
     # ----------------------------------------------------------------
-    async def write_query(self, question, llm: ChatOpenAI):
-        """Generate SQL query using LLM and live schema."""
+    async def write_query(self, question: str, llm: ChatOpenAI, request_id: str = "-"):
+        """
+        Generate SQL query using LLM and schema.
+        Logs prompt preview instead of SQL (SQL will be logged later).
+        """
+        start = time.perf_counter()
+
         DB_schema = await self.schema
         query_prompt_template = self.promptemp()
 
@@ -393,63 +393,128 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
                 "input": question,
             }
         )
+
+        # ✅ Log prompt preview (NOT schema-full junk)
+        try:
+            # prompt is ChatPromptValue -> messages
+            messages = prompt.to_messages()
+            prompt_preview = " | ".join([m.content[:180].replace("\n", " ") for m in messages])
+        except Exception:
+            prompt_preview = str(prompt)[:400].replace("\n", " ")
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            f"[SQL_GEN_PROMPT] elapsed_ms={elapsed_ms:.2f} prompt_preview={prompt_preview}",
+            extra={"request_id": request_id},
+        )
+
         structured_llm = llm.with_structured_output(QueryOutput)
         result = structured_llm.invoke(prompt)
-        print(prompt)
+
+        # ✅ return result only (SQL logging will be done in invoke_streaming)
         return result
 
     # ----------------------------------------------------------------
     # 🧩 QUERY EXECUTION (Async)
     # ----------------------------------------------------------------
-    async def execute_query(self, session: AsyncSession, query):
-        """Execute a raw SQL query asynchronously using SQLModel AsyncSession."""
+    async def execute_query(self, session: AsyncSession, query: str, request_id: str = "-"):
+        start = time.perf_counter()
         try:
             result = await session.exec(text(query))
             rows = result.all()
-            return [dict(row._mapping) for row in rows]
+            data = [dict(row._mapping) for row in rows]
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.info(
+                f"[SQL_EXEC_SUCCESS] elapsed_ms={elapsed_ms:.2f} rows={len(data)}",
+                extra={"request_id": request_id},
+            )
+            return data
+
         except SQLAlchemyError as e:
+            await session.rollback()
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.exception(
+                f"[SQL_EXEC_ERROR] elapsed_ms={elapsed_ms:.2f} error={str(e)} query={query}",
+                extra={"request_id": request_id},
+            )
             raise Exception(f"Database error: {e}")
-        
+
+    # ----------------------------------------------------------------
     # 🧩 MAIN STREAMING LOGIC
     # ----------------------------------------------------------------
-    async def invoke_streaming(self, question, llm: ChatOpenAI,session: AsyncSession):
-        """Generate query, execute asynchronously, and stream LLM answer."""
+    async def invoke_streaming(
+        self,
+        question: str,
+        llm: ChatOpenAI,
+        session: AsyncSession,
+        request_id: str = "-",   # ✅ NEW
+    ):
+        """
+        Generate query, execute asynchronously, and stream LLM answer.
+        """
+        overall_start = time.perf_counter()
+
         attempt = 0
         max_retries = 1
         last_error = None
         querygenbyllm = None
 
+        logger.info(
+            f"[RAG_START] question={question[:150]}",
+            extra={"request_id": request_id},
+        )
+
         while attempt <= max_retries:
             try:
+                logger.info(
+                    f"[RAG_ATTEMPT] attempt={attempt}",
+                    extra={"request_id": request_id},
+                )
+
                 if attempt == 0:
-                    querygenbyllm = await self.write_query(question, llm)
-                    # querygenbyllm = {"query":"usuffsdf"}
+                    querygenbyllm = await self.write_query(question, llm, request_id=request_id)
                 else:
-                    # regenerate query based on last error
                     feedback_prompt = (
                         f"The previously generated SQL query failed:\n{querygenbyllm}\n"
                         f"Error message: {last_error}\n"
                         f"Tables/columns allowed: {self.schema}\n"
                         f"Please generate a corrected MS-SQL query for the same user question:\n{question}"
                     )
+
+                    logger.warning(
+                        f"[SQL_RETRY] attempt={attempt} last_error={last_error}",
+                        extra={"request_id": request_id},
+                    )
+
                     structured_llm = llm.with_structured_output(QueryOutput)
                     querygenbyllm = structured_llm.invoke(feedback_prompt)
-                    # querygenbyllm = {"query":"usuffsdf"}
 
                 sql_text = querygenbyllm["query"] if isinstance(querygenbyllm, dict) else str(querygenbyllm)
-                print(Fore.GREEN + f'Generated SQL:\n"{sql_text}"' + Style.RESET_ALL)
 
+                logger.info(
+                    f"[SQL_GENERATED] sql={sql_text}",
+                    extra={"request_id": request_id},
+                )
 
-                # Execute SQL
+                # ✅ Execute SQL
                 try:
-                    query_values = await self.execute_query(session, sql_text)
-                    print(Fore.RED + f'Query Result:\n"{query_values}"' + Style.RESET_ALL)
+                    query_values = await self.execute_query(session, sql_text, request_id=request_id)
+
+                    logger.info(
+                        f"[SQL_RESULT] rows={len(query_values)}",
+                        extra={"request_id": request_id},
+                    )
+
                 except Exception as sql_error:
                     last_error = str(sql_error)
-                    print(Fore.RED + f'SQL Execution failed:\n"{last_error}"' + Style.RESET_ALL)
+                    logger.warning(
+                        f"[SQL_FAILED] error={last_error}",
+                        extra={"request_id": request_id},
+                    )
                     attempt += 1
+
                     if attempt > max_retries:
-                        # ✅ fallback if retries exhausted
                         fallback_prompt = (
                             f"The user asked: {question}\n"
                             f"However, the system could not retrieve an answer from the database "
@@ -457,13 +522,19 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
                             "Please provide a polite, general response that acknowledges the failure "
                             "without exposing technical details, and suggest the user try rephrasing."
                         )
+
+                        logger.error(
+                            f"[RAG_FALLBACK] max_retries_exhausted error={last_error}",
+                            extra={"request_id": request_id},
+                        )
+
                         async for token in llm.astream(fallback_prompt):
                             yield token.content
-
                         return
+
                     continue  # retry loop
 
-                # Only if SQL succeeded, generate streaming answer
+                # ✅ Generate final answer using SQL result
                 answer_prompt = (
                     "Given the following user question, corresponding SQL query, "
                     "and SQL result, answer the user question.\n\n"
@@ -471,17 +542,32 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
                     f"SQL Query: {sql_text}\n"
                     f"SQL Result: {query_values}"
                 )
+
+                logger.info(
+                    f"[LLM_ANSWER_START] rows={len(query_values)}",
+                    extra={"request_id": request_id},
+                )
+
                 async for token in llm.astream(answer_prompt):
                     yield token.content
 
-                return
-            except Exception as e:
-                # Catch unexpected errors in query generation
-                last_error = str(e)
-                print(Fore.RED + f'Attempt {attempt+1} failed with error:\n"{last_error}"' + Style.RESET_ALL)
-                attempt += 1
-            # 🚨 If loop is exhausted without success (e.g. DB down, LLM issue, etc.)
+                elapsed_ms = (time.perf_counter() - overall_start) * 1000
+                logger.info(
+                    f"[RAG_SUCCESS] total_ms={elapsed_ms:.2f}",
+                    extra={"request_id": request_id},
+                )
 
+                return
+
+            except Exception as e:
+                last_error = str(e)
+                logger.exception(
+                    f"[RAG_ERROR] attempt={attempt} error={last_error}",
+                    extra={"request_id": request_id},
+                )
+                attempt += 1
+
+        # final fallback
         fallback_prompt = (
             f"The user asked: {question}\n\n"
             f"The system failed after {max_retries+1} attempts.\n"
@@ -491,17 +577,29 @@ CREATE INDEX idx_lr_status ON public.loan_repayments(status);
             "Suggest they try again later or rephrase their request."
         )
 
+        logger.error(
+            f"[RAG_FINAL_FALLBACK] error={last_error}",
+            extra={"request_id": request_id},
+        )
+
         try:
             async for token in llm.astream(fallback_prompt):
                 yield token.content
         except Exception:
             yield "Sorry, something went wrong while processing your request. Please try again later."
 
+
+# ----------------------------------------------------------------
+# ✅ Rewrite question with history (LOGGING ADDED)
+# ----------------------------------------------------------------
 async def rewrite_question_with_history(
     llm: ChatOpenAI,
     current_question: str,
     history: list[dict],
+    request_id: str = "-",   # ✅ NEW
 ) -> str:
+    start = time.perf_counter()
+
     history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
 
     prompt = ChatPromptTemplate.from_messages([
@@ -520,6 +618,11 @@ async def rewrite_question_with_history(
     msgs = prompt.format_messages(history=history_text, question=current_question)
     resp = await llm.ainvoke(msgs)
     rewritten = (resp.content or "").strip()
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        f"[REWRITE_DONE] elapsed_ms={elapsed_ms:.2f} rewritten={rewritten[:150]}",
+        extra={"request_id": request_id},
+    )
+
     return rewritten if rewritten else current_question
-
-
