@@ -7,6 +7,7 @@ from src.conversations.routes import router as conversation_router
 
 from src.core.logger import setup_logging
 from src.core.middleware import RequestIdMiddleware
+from src.logs.routes import router as logs_router
 
 setup_logging()
 
@@ -32,3 +33,4 @@ version_prefix =f"/api"
 app.include_router(auth_router, prefix=f"{version_prefix}/auth", tags=["auth"])
 app.include_router(conversation_router, prefix=f"{version_prefix}/conversations", tags=["conversations"])
 app.include_router(chatbot_router, prefix=f"{version_prefix}/chatbot", tags=["chatbot"])
+app.include_router(logs_router, prefix=f"{version_prefix}/logs", tags=["logs"])

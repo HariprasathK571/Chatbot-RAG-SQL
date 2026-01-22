@@ -14,6 +14,7 @@ from src.auth.security import (
     decode_refresh_token
 )
 from src.auth.deps import get_current_user
+from fastapi.security import OAuth2PasswordRequestForm
 
 
 auth_router = APIRouter()
@@ -48,11 +49,17 @@ async def register(req: RegisterRequest, session: AsyncSession = Depends(get_ses
 
 
 @auth_router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, session: AsyncSession = Depends(get_session)):
-    result = await session.exec(select(User).where(User.email == req.email))
-    user = result.one_or_none()  # ✅ changed
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    email = form_data.username
+    password = form_data.password
 
-    if not user or not verify_password(req.password, user.hashed_password):
+    result = await session.exec(select(User).where(User.email == email))
+    user = result.one_or_none()
+
+    if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.is_active:
