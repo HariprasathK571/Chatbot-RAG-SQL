@@ -7,7 +7,7 @@ from src.conversations.routes import router as conversation_router
 
 from src.core.logger import setup_logging
 from src.core.middleware import RequestIdMiddleware
-from src.logs.routes import router as logs_router
+from src.core.routes import router as logs_router
 
 setup_logging()
 
