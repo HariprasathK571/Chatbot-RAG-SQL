@@ -18,18 +18,28 @@ from src.chatbot.tools_general import GeneralTool
 from src.chatbot.tools_db import DBTool
 
 from src.conversations.service import ConversationService, ConversationTitleGenerator
-
+import os
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 chatbot_router = APIRouter()
 conn = MSSQLConnector()
 
+load_dotenv()  # loads .env variables
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-4o-mini")
+
+if not OPENAI_API_KEY:
+    raise RuntimeError("Missing OPENAI_API_KEY in environment variables")
+
 # ✅ LLM Config (OpenRouter)
 llm = ChatOpenAI(
-    openai_api_key="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",
-    openai_api_base="https://openrouter.ai/api/v1",
-    model="openai/gpt-4o-mini"
+    openai_api_key=OPENAI_API_KEY,
+    openai_api_base=OPENAI_API_BASE,
+    model=OPENAI_MODEL,
 )
 
 

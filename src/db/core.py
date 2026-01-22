@@ -2,13 +2,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, create_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
+import os
+from dotenv import load_dotenv
+load_dotenv()
  # noqa: F401
 
 # from config import Config
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-sync_url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/Banking-Transaction"
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL not set")
 
-async_engine = AsyncEngine(create_engine(url="postgresql+asyncpg://postgres:cantier123@192.168.150.110:5432/HBA"))
+sync_url=DATABASE_URL
+
+async_engine = AsyncEngine(create_engine(url=DATABASE_URL))
 
 
 async def init_db() -> None:
